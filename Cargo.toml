@@ -10,5 +10,7 @@ tokio = { version = "1.28.0", features = [ "full" ] }
 tokio-util = "0.7"
 log = "0.4"
 simple_logger = "4.2"
-clap = { version = "4.3", features = [ "cargo" ] }
+clap = { version = "4.3", features = [ "cargo", "derive" ] }
+clap-utils = "0.4"
+strum = { version = "0.25", features = ["derive"] }
 ctrlc = "3.4.0"

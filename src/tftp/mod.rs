@@ -274,8 +274,8 @@ impl TftpConnection {
 		self.send_packet(&oack_pkt);
 
 		match self.receive_packet(&mut buf[..], Some(packet::PacketKind::Ack)) {
-			Ok(p) => (),
-			Err(e) => return Err(OptionError::NoAck),
+			Ok(_) => (),
+			Err(_) => return Err(OptionError::NoAck),
 		}
 		
 		self.options.merge_from(&negotiation);
