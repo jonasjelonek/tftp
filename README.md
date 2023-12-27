@@ -1,6 +1,6 @@
 # tftp
 
-A decent and cross-compatible tftp server written in Rust, trying to be fast and low-footprint.
+A decent and cross-compatible tftp server + client written in Rust, trying to be fast and low-footprint.
 
 ## Really fast and low-footprint??
 
@@ -17,6 +17,8 @@ If you think there is room for improvement, please open an issue or a pull reque
   - [x] RRQ/GET
   - [x] WRQ/PUT
 - [ ] Client mode
+  - [ ] RRQ/GET
+  - [ ] WRQ/PUT 
 - [x] TFTP options
   - [x] Blocksize
   - [x] Timeout
@@ -25,9 +27,16 @@ If you think there is room for improvement, please open an issue or a pull reque
 
 It supports parallel operation with a arbitrary number of peers.
 
+## Supported RFCs
+- [x] RFC 1350 - TFTP protocol
+- [x] RFC 2347 - TFTP option extension
+- [x] RFC 2348 - TFTP blocksize option
+- [x] RFC 2349 - TFTP timeout and transfer size options
+- [ ] RFC 7440 - TFTP windowsize option
+
 ## Big TODOs
 
-- ~~WRQ/PUT support - allow the client to store a file on the server~~
-- Window size option support
+- ~~WRQ/PUT support - allow the client to store a file on the server~~ - DONE
+- ~~Window size option support~~ - NOT PLANNED ATM
 - get rid of all the `unwrap`s - they are bad style
 - improve general output, especially for debugging
