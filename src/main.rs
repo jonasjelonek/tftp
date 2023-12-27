@@ -7,11 +7,10 @@ pub mod tftp;
 pub mod server;
 pub mod client;
 
-use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use tokio_util::sync::CancellationToken;
 
+use tokio_util::sync::CancellationToken;
 use log::{info, warn, error, debug, trace};
 use clap::Parser;
 
@@ -63,13 +62,10 @@ async fn main() {
 			let listen_addr = SocketAddr::from((bind, port));
 			server::server_task(listen_addr, cancel_token).await
 		},
-		cli::RunMode::Client { } => todo!()
+		cli::RunMode::Client { action } => todo!(), //client::run_client(action).await,
 	};
 
 	if let Err(e) = res {
 		return error!("{}", e);
 	}
-
-	// Moving the above part after setting the SIGINT handler into a task and then awaiting it breaks the logger somehow!
-	// Messages are extremely delayed, probably due to blocking the main task somehow.
 }

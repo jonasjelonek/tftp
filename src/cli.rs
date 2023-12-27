@@ -55,7 +55,46 @@ pub enum RunMode {
 		#[arg(short, long, default_value_t = crate::tftp::consts::TFTP_LISTEN_PORT)]
 		port: u16,
 	},
-	Client { }
+	Client {
+		#[command(subcommand)]
+		action: ClientAction
+	}
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ClientAction {
+	Get {
+		file: PathBuf,
+		server: IpAddr,
+
+		#[arg(short, long, default_value_t = crate::tftp::consts::TFTP_LISTEN_PORT)]
+		port: u16,
+
+		//#[arg(short, long, value_enum, default_value_t = crate::tftp::Mode::Octet)]
+		//mode: crate::tftp::Mode,
+
+		#[arg(short, long)]
+		blocksize: Option<u16>,
+
+		#[arg(short, long)]
+		timeout: Option<u8>
+	},
+	Put {
+		file: PathBuf,
+		server: IpAddr,
+
+		#[arg(short, long, default_value_t = crate::tftp::consts::TFTP_LISTEN_PORT)]
+		port: u16,
+
+		//#[arg(short, long, value_enum, default_value_t = crate::tftp::Mode::Octet)]
+		//mode: crate::tftp::Mode,
+
+		#[arg(short, long)]
+		blocksize: Option<u16>,
+
+		#[arg(short, long)]
+		timeout: Option<u8>
+	}
 }
 
 pub fn init_logger(debug_level: DebugLevel) {
