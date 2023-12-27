@@ -30,13 +30,20 @@ fn working_dir<'a>() -> &'a PathBuf {
 async fn main() {
 	let options = cli::Options::parse();
 
-	/* Initialize logging facility; can unwrap here because it has a default value */
 	cli::init_logger(options.debug);
 
-	/* Handle the global args here */
+	/* Init our root directory */
 	if let Some(root_dir) = options.root_dir {
-		match root_dir.try_exists() {
-			Ok(true) => WORKING_DIR.set(root_dir.clone()).unwrap_or(()),
+		let root = match PathBuf
+			::from(&shellexpand::tilde(&root_dir.to_string_lossy())[..])
+			.canonicalize()
+		{
+			Ok(p) => p,
+			Err(e) => return error!(""),
+		};
+
+		match root.try_exists() {
+			Ok(true) => WORKING_DIR.set(root.clone()).unwrap_or(()),
 			_ => return error!("Cannot find/access specified root path!")
 		}
 	} else {
