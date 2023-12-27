@@ -66,10 +66,9 @@ async fn main() {
 
 	let res = match options.run_mode {
 		cli::RunMode::Server { bind, port } => {
-			let listen_addr = SocketAddr::from((bind, port));
-			server::server_task(listen_addr, cancel_token).await
+			server::run_server((bind, port).into(), cancel_token).await
 		},
-		cli::RunMode::Client { action } => todo!(), //client::run_client(action).await,
+		cli::RunMode::Client { action } => todo!(),//client::run_client(action).await,
 	};
 
 	if let Err(e) = res {

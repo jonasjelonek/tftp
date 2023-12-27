@@ -1,11 +1,11 @@
-use std::collections::HashMap;
-use std::net::{UdpSocket, SocketAddr};
+use std::net::{UdpSocket, SocketAddr, IpAddr};
 use std::path::PathBuf;
 use std::{fmt::Display, time::Duration};
-use std::io::{self, BufReader, BufWriter};
+use std::io::{self, Read, Write, BufReader, BufWriter};
 use std::fs::File;
 
 use tokio_util::sync::CancellationToken;
+use log::{info, warn, error, debug, trace};
 
 pub mod consts {
 	pub const TFTP_LISTEN_PORT: u16 = 69;
@@ -24,6 +24,8 @@ pub mod consts {
 	pub const OPCODE_ACK: u16 = 4;
 	pub const OPCODE_ERROR: u16 = 5;
 	pub const OPCODE_OACK: u16 = 6;
+
+	pub const EMPTY_CHUNK: &[u8] = &[];
 }
 
 pub mod packet;
@@ -63,7 +65,7 @@ impl Display for ErrorCode {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, clap::ValueEnum)]
 pub enum Mode {
 	NetAscii,
 	Octet,
@@ -102,13 +104,9 @@ pub enum BufFile {
 }
 
 pub struct TftpConnection {
-	req_kind: RequestKind,
 	tx_mode: Mode,
 	socket: UdpSocket,
 
-	file_path: PathBuf,
-	pub file_handle: Option<File>,
-	//file: Option<BufFile>,
 	options: TftpOptions,
 
 	cxl_tok: CancellationToken,
@@ -117,57 +115,39 @@ pub struct TftpConnection {
 impl TftpConnection {
 
 	#[inline(always)]
-	pub fn new(socket: UdpSocket, options: TftpOptions, req_kind: RequestKind, cxl_tok: CancellationToken) -> Self {
-		if let Err(_) = socket.peer_addr() {
-			/* The socket must be connected already! */
-			panic!()
-		}
+	pub fn new(local_addr: IpAddr, to: SocketAddr, options: TftpOptions, cxl_tok: CancellationToken) -> io::Result<Self> {
+		let socket = UdpSocket::bind(SocketAddr::new(local_addr, 0))?;
+		socket.connect(to)?;
 
-		Self { 
-			req_kind,
+		Ok(Self {
 			socket,
-			file_handle: None,
-			file_path: PathBuf::default(),
 			options,
 			cxl_tok,
 			tx_mode: Mode::Octet
-		}
+		})
 	}
 
 	// ########################################################################
 	// ###### GETTER ##########################################################
 	// ########################################################################
 
-	#[inline(always)] pub fn request_kind(&self) 		-> RequestKind 	{ self.req_kind }
 	#[inline(always)] pub fn tx_mode(&self) 			-> Mode 		{ self.tx_mode }
-	#[inline(always)] pub fn file_path(&self) 			-> &PathBuf 	{ &self.file_path }
 	#[inline(always)] pub fn opt_blocksize(&self) 		-> u16 			{ self.options.blocksize }
 	#[inline(always)] pub fn opt_timeout(&self) 		-> Duration 	{ self.options.timeout }
-	#[inline(always)] pub fn opt_transfer_size(&self) 	-> u16 			{ self.options.transfer_size }
+	#[inline(always)] pub fn opt_transfer_size(&self) 	-> u32 			{ self.options.transfer_size }
 	#[inline(always)] pub fn host_cancelled(&self) 		-> bool 		{ self.cxl_tok.is_cancelled() }
 
 	#[inline(always)]
 	pub fn peer(&self) -> SocketAddr {
-		/* Socket must be connected on creation of this instance! */
 		self.socket.peer_addr().unwrap()
 	}
-	
+
 	#[inline(always)]
-	pub fn take_file_handle(&mut self) -> File {
-		self.file_handle.take().unwrap()
-	}
+	pub fn options_mut(&mut self) -> &mut TftpOptions { &mut self.options }
 
 	// ########################################################################
 	// ###### SETTER ##########################################################
 	// ########################################################################
-
-	pub fn set_file_path(&mut self, path: &PathBuf) {
-		self.file_path = path.clone()
-	}
-
-	pub fn set_file_handle(&mut self, file: File) {
-		self.file_handle = Some(file);
-	}
 
 	pub fn set_reply_timeout(&mut self, timeout: Duration) {
 		self.socket.set_nonblocking(false).unwrap();
@@ -183,12 +163,12 @@ impl TftpConnection {
 		let pkt: packet::TftpPacket;
 		
 		match self.socket.recv_from(buf) {
-			Ok((_, tx)) => {
-				if tx != self.peer() { /* IP and Port must be the same for whole connection */
+			Ok((len, tx)) => {
+				if tx != self.peer() { /* IP and port must be the same for whole connection */
 					return Err(ReceiveError::UnknownTid);
 				}
 	
-				pkt = packet::TftpPacket::try_from_buf(buf)
+				pkt = packet::TftpPacket::try_from_buf(&buf[..len])
 					.map_err(|e| ReceiveError::InvalidPacket(e))?;
 
 				if let Some(exp_kind) = expect && pkt.packet_kind() != exp_kind {
@@ -247,41 +227,6 @@ impl TftpConnection {
 		}
 	}
 
-	pub fn negotiate_options(&mut self, raw_opts: HashMap<&str, &str>) -> Result<(), OptionError> {
-		let mut buf: [u8; 16] = [0; 16];
-
-		if raw_opts.is_empty() {
-			return Ok(());
-		}
-		
-		let Ok(mut negotiation) = OptionNegotiation::parse_options(raw_opts) else {
-			return Err(OptionError::InvalidOption);
-		};
-
-		// Set transfer size if client requested it
-		if self.req_kind == RequestKind::Rrq {
-			if let Some(opt) = negotiation.find_option_mut(TftpOptionKind::TransferSize) &&
-			   let TftpOption::TransferSize(tsz) = opt &&
-			   *tsz == 0
-			{
-				/* TBD: Can this fail if we checked before to have read access? */
-				let metadata = self.file_handle.as_ref().unwrap().metadata().unwrap();
-				*tsz = metadata.len() as u16;
-			}
-		}
-
-		let oack_pkt = packet::MutableTftpPacket::OAck(negotiation.build_oack_packet());
-		self.send_packet(&oack_pkt);
-
-		match self.receive_packet(&mut buf[..], Some(packet::PacketKind::Ack)) {
-			Ok(_) => (),
-			Err(_) => return Err(OptionError::NoAck),
-		}
-		
-		self.options.merge_from(&negotiation);
-		Ok(())
-	}
-
 	pub fn drop(self) { }
 
 	pub fn drop_with_err(self, code: ErrorCode, msg: Option<String>) {
@@ -294,6 +239,117 @@ impl TftpConnection {
 
 		let _ = self.socket.send(err_pkt.as_bytes());
 
-		return log::info!("Tftp error: code {}; {}", code, msg.unwrap_or("".to_string()));
+		return info!("Tftp error: code {}; {}", code, msg.unwrap_or("".to_string()));
 	}
+}
+
+pub async fn receive_file(conn: TftpConnection, file: File) {
+	//info!("WRQ from {} to receive '{}'", peer, filename.to_string_lossy());
+	//if mode == Mode::NetAscii {
+	//	return Err(tftp_err!(IllegalOperation, Some(format!("NetAscii not supported"))));
+	//}
+	let mut file = BufWriter::new(file);
+	let blocksize = conn.opt_blocksize();
+	let mut blocknum: u16 = 0;
+	let mut data_buf: Vec<u8> = vec![0; 4 + (blocksize as usize)];
+
+	loop {
+		if conn.host_cancelled() {
+			return conn.drop();
+		}
+
+		let pkt = match conn.receive_packet(&mut data_buf[..], Some(packet::PacketKind::Data)) {
+			Ok(p) => p,
+			Err(e) => {
+				error!("Interrupted file transfer: {:?}", e);
+				return conn.drop();
+			},
+		};
+		let packet::TftpPacket::Data(pkt) = pkt else { panic!() };
+		if pkt.blocknum() != blocknum.wrapping_add(1) {
+			continue;
+		}
+
+		if let Err(e) = file.write_all(pkt.data()) {
+			error!("failed to write to file due to lower layer error: {}", e);
+			return conn.drop_with_err(ErrorCode::StorageError, None);
+		}
+
+		blocknum = blocknum.wrapping_add(1);
+		
+		let inner_ack = packet::MutableTftpAck::new(blocknum);
+		let ack_pkt = packet::MutableTftpPacket::Ack(inner_ack);
+		conn.send_packet(&ack_pkt);
+
+		if pkt.data_len() < (blocksize as usize) {
+			break;
+		}
+	}
+	debug!("received file")
+}
+
+///
+/// send_file
+/// 
+/// It should be possible to use this for RRQ in server mode and WRQ in client mode
+pub async fn send_file(conn: TftpConnection, file: File) {
+	let filesize = file.metadata().unwrap().len();
+	let blocksize = conn.opt_blocksize();
+
+	if conn.tx_mode() == Mode::NetAscii {
+		return conn.drop_with_err(
+			tftp::ErrorCode::IllegalOperation, 
+			Some(format!("NetAscii not supported"))
+		);
+	}
+
+	let mut file_read = BufReader::new(file);
+	debug!("start sending file");
+
+	/* Use only one buffer for file read and packet send. The first 4 bytes are always reserved
+	 * for packet header and the file is read after that. */
+	let mut file_buf: Vec<u8> = vec![0; 4 + (blocksize as usize)];
+	let mut n_blocks = filesize / (blocksize as u64);
+	let remainder = filesize % (blocksize as u64);
+	if remainder != 0 {
+		/* +1 for remaining bytes */
+		n_blocks += 1;
+	}
+
+	for blocknum in 1..=n_blocks {
+		if conn.host_cancelled() {
+			return conn.drop();
+		}
+
+		file_buf.truncate(4);
+		if let Err(e) = file_read.by_ref().take(blocksize as u64).read_to_end(&mut file_buf) {
+
+		}
+		trace!("file_buf has len {} and capacity {}", file_buf.len(), file_buf.capacity());
+
+		let mut pkt = packet::MutableTftpData::try_from(&mut file_buf[..], true).unwrap();
+		pkt.set_blocknum(blocknum as u16);
+		
+		let pkt_ref = packet::MutableTftpPacket::Data(pkt);
+		if let Err(_) = conn.send_and_wait_for_reply(&pkt_ref, packet::PacketKind::Ack, 5) {
+			return conn.drop();
+		}
+	}
+
+	/* send a final empty packet in case file_len mod blocksize == 0 */
+	if remainder == 0 {
+		file_buf.truncate(4);
+		
+		let mut pkt = packet::MutableTftpData::try_from(&mut file_buf[..], false).unwrap();
+		pkt.set_blocknum(pkt.blocknum() + 1);
+		pkt.set_data(consts::EMPTY_CHUNK);
+		
+		let pkt_ref = packet::MutableTftpPacket::Data(pkt);
+		match conn.send_and_wait_for_reply(&pkt_ref, packet::PacketKind::Ack, 5) {
+			Ok(_) => (),
+			Err(_e) => return conn.drop(),
+		}
+	}
+
+	debug!("sent file");
 }

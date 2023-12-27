@@ -14,20 +14,20 @@ If you think there is room for improvement, please open an issue or a pull reque
 ## Supported TFTP features
 
 - [x] Server mode
-  - [x] GET
-  - [ ] PUT
+  - [x] RRQ/GET
+  - [x] WRQ/PUT
 - [ ] Client mode
 - [x] TFTP options
   - [x] Blocksize
   - [x] Timeout
   - [x] Transfer size
   - [ ] Window size
-     
+
 It supports parallel operation with a arbitrary number of peers.
 
 ## Big TODOs
 
-- PUT support - allow the client to store a file on the server
+- ~~WRQ/PUT support - allow the client to store a file on the server~~
 - Window size option support
 - get rid of all the `unwrap`s - they are bad style
 - improve general output, especially for debugging

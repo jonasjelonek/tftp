@@ -99,6 +99,30 @@ impl<'a> TftpReq<'a> {
 }
 
 pub struct TftpData<'a> { buf: &'a [u8] }
+impl <'a> TftpData<'a> {
+	pub fn from_buf(buf: &'a [u8]) -> Self {
+		Self { buf }
+	}
+
+	pub fn try_from_buf(buf: &'a [u8]) -> Result<Self, PacketError> {
+		if buf.len() < 4 {
+			return Err(PacketError::UnexpectedEof);
+		}
+		match u16::from_be_bytes([ buf[0], buf[1] ]) {
+			consts::OPCODE_DATA => (),
+			_ => return Err(PacketError::UnexpectedOpcode),
+		}
+
+		Ok(Self { buf })
+	}
+
+	pub fn blocknum(&self) -> u16 {
+		u16::from_be_bytes([ self.buf[2], self.buf[3] ])
+	}
+
+	pub fn data(&self) -> &[u8] { &self.buf[4..] }
+	pub fn data_len(&self) -> usize { self.buf.len() - 4 }
+}
 
 pub struct TftpAck<'a> { buf: &'a [u8] }
 impl<'a> TftpAck<'a> {
@@ -158,6 +182,7 @@ impl<'a> TftpPacket<'a> {
 			match u16::from_be_bytes([ buf[0], buf[1] ]) {
 				consts::OPCODE_RRQ | consts::OPCODE_WRQ => Self::Req(TftpReq::try_from_buf(buf)?),
 				consts::OPCODE_ACK => Self::Ack(TftpAck::try_from_buf(buf)?),
+				consts::OPCODE_DATA => Self::Data(TftpData::try_from_buf(buf)?),
 				_ => return Err(PacketError::InvalidOpcode),
 			}
 		)
@@ -241,7 +266,7 @@ impl<'a> MutableTftpData<'a> {
 	pub fn as_bytes(&self) -> &[u8] { &self.buf[..self.len] }
 }
 
-impl<'a> TryFrom<&'a mut [u8]> for MutableTftpData<'a> {
+/*impl<'a> TryFrom<&'a mut [u8]> for MutableTftpData<'a> {
 	type Error = ();
 
 	fn try_from(buf: &'a mut [u8]) -> Result<Self, Self::Error> {
@@ -253,6 +278,23 @@ impl<'a> TryFrom<&'a mut [u8]> for MutableTftpData<'a> {
 
 		Ok(Self { buf, len: 4 })
 	}
+}*/
+
+pub struct MutableTftpAck {
+	buf: [u8; 4],
+}
+impl MutableTftpAck {
+	pub fn new(blocknum: u16) -> Self {
+		let opcode = super::consts::OPCODE_ACK.to_be_bytes();
+		let blocknum_b = blocknum.to_be_bytes();
+		Self { buf: [ opcode[0], opcode[1], blocknum_b[0], blocknum_b[1] ] }
+	}
+
+	pub fn set_blocknum(&mut self, blocknum: u16) {
+		self.buf[2..=3].copy_from_slice(blocknum.to_be_bytes().as_ref())
+	}
+
+	pub fn as_bytes(&self) -> &[u8] { &self.buf[..] }
 }
 
 pub struct MutableTftpOAck { 
@@ -334,6 +376,7 @@ impl<'a> MutableTftpError<'a> {
 
 pub enum MutableTftpPacket<'a> {
 	Data(MutableTftpData<'a>),
+	Ack(MutableTftpAck),
 	OAck(MutableTftpOAck),
 	Err(MutableTftpError<'a>),
 }
@@ -343,6 +386,7 @@ impl<'a> MutableTftpPacket<'a> {
 			Self::Data(p) => p.as_bytes(),
 			Self::Err(p) => p.as_bytes(),
 			Self::OAck(p) => p.as_bytes(),
+			Self::Ack(p) => p.as_bytes(),
 		}
 	}
 }

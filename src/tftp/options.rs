@@ -23,7 +23,7 @@ pub enum TftpOptionKind {
 pub enum TftpOption {
 	Blocksize(u16),
 	Timeout(Duration),
-	TransferSize(u16),
+	TransferSize(u32),
 	WindowSize(u16),
 }
 impl TftpOption {
@@ -87,7 +87,7 @@ impl OptionNegotiation {
 		}
 
 		if let Some(val) = raw_opts.get(consts::OPT_TRANSFERSIZE_IDENT) {
-			if let Ok(tf_size) = u16::from_str_radix(*val, 10) {
+			if let Ok(tf_size) = u32::from_str_radix(*val, 10) {
 				res.add_option(TftpOption::TransferSize(tf_size));
 			} else { return Err(()); }
 		}
@@ -116,7 +116,7 @@ impl OptionNegotiation {
 pub struct TftpOptions {
 	pub blocksize: u16,
 	pub timeout: Duration,
-	pub transfer_size: u16,
+	pub transfer_size: u32,
 	pub window_size: u16
 }
 impl TftpOptions {
