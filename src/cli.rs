@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use clap::{arg, command, ValueEnum};
 use clap::{Parser, Subcommand};
-use clap_utils::EnumString;
 
 use simple_logger::SimpleLogger;
 
@@ -23,25 +22,15 @@ pub struct Options {
 	pub run_mode: RunMode,
 }
 
-#[derive(Debug, Clone, ValueEnum, Default, EnumString)]
+#[derive(Debug, Clone, ValueEnum, Default)]
 pub enum DebugLevel {
-	#[strum(serialize = "off")]
 	Off = 0,
-
-	#[strum(serialize = "err", serialize = "error")]
 	Error,
 
 	#[default]
-	#[strum(serialize = "warn")]
 	Warn,
-
-	#[strum(serialize = "info")]
 	Info,
-
-	#[strum(serialize = "debug")]
 	Debug,
-
-	#[strum(serialize = "trace")]
 	Trace
 }
 impl From<DebugLevel> for log::LevelFilter {
