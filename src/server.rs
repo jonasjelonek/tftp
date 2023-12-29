@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use tokio_util::sync::CancellationToken;
 
+#[allow(unused)]
 use log::{info, warn, error, debug, trace};
 
 use crate::tftp::{
@@ -39,8 +40,7 @@ impl TftpServer {
 		}
 	}
 
-	async fn negotiate_options<'a>(
-		&self,
+	async fn negotiate_options<'a>(&self,
 		conn: &mut TftpConnection,
 		raw_opts: HashMap<&'a str, &'a str>,
 		transfer_size: u32,
@@ -50,9 +50,9 @@ impl TftpServer {
 			return Ok(false);
 		}
 		
-		let Ok(mut negotiation) = OptionNegotiation::parse_options(raw_opts) else {
-			return Err(OptionError::InvalidOption);
-		};
+		let mut negotiation = OptionNegotiation
+			::parse_options(raw_opts)
+			.map_err(|_| OptionError::InvalidOption)?;
 
 		// Set transfer size if client requested it
 		if req_kind == RequestKind::Rrq {
@@ -70,9 +70,8 @@ impl TftpServer {
 		if req_kind == RequestKind::Rrq {
 			let mut buf: [u8; 16] = [0; 16];
 
-			if let Err(_) = conn.receive_packet(&mut buf[..], Some(pkt::PacketKind::Ack)) {
-				return Err(OptionError::NoAck);
-			}
+			conn.receive_packet(&mut buf[..], Some(pkt::PacketKind::Ack))
+				.map_err(|_| OptionError::NoAck)?;
 		}
 		
 		conn.options_mut().merge_from(&negotiation);
@@ -88,6 +87,22 @@ impl TftpServer {
 			Ok(con) => con,
 			Err(e) => return error!("failed to handle request due to lower layer error: {}", e),
 		};
+
+		match req.mode() {
+			Ok(mode) if mode == Mode::Octet => (),
+			Ok(mode) if mode == Mode::NetAscii => {
+				return conn.drop_with_err(
+					tftp::ErrorCode::NotDefined, 
+					Some("NetAscii mode not supported".to_string())
+				)
+			},
+			Ok(_) | Err(_) => {
+				return conn.drop_with_err(
+					tftp::ErrorCode::NotDefined, 
+					Some("Malformed request; invalid mode".to_string())
+				)
+			},
+		}
 	
 		let mut path = crate::working_dir().clone();
 		let Ok(filename) = req.filename() else {
@@ -126,8 +141,8 @@ impl TftpServer {
 			}
 		};
 		conn.set_reply_timeout(conn.opt_timeout());
+		conn.set_tx_mode(req.mode().unwrap());
 	
-		//info!("RRQ from {} to serve '{}' in '{}' mode", conn.peer(), path.file_name().unwrap().to_string_lossy(), conn.tx_mode());
 		info!("{:?} from {}", req.kind(), conn.peer());
 		match req.kind() {
 			tftp::RequestKind::Rrq => tftp::send_file(conn, file).await,
