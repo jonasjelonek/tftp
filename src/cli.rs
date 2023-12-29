@@ -1,7 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
 
-use clap::{arg, command, ValueEnum};
+use clap::{arg, command, ValueEnum, Args};
 use clap::{Parser, Subcommand};
 
 use simple_logger::SimpleLogger;
@@ -11,11 +11,11 @@ use simple_logger::SimpleLogger;
 pub struct Options {
 	#[arg(value_enum, short, long, 
 		default_value_t = DebugLevel::Warn,
-		help = "Debug level to determine which messages are printed"
+		help = "Debug level to determine which messages are printed", global = true
 	)]
 	pub debug: DebugLevel,
 
-	#[arg(short = 'r', long = "root")]
+	#[arg(short = 'r', long = "root", global = true)]
 	pub root_dir: Option<PathBuf>,
 
 	#[command(subcommand)]
@@ -46,6 +46,24 @@ impl From<DebugLevel> for log::LevelFilter {
 	}
 }
 
+#[derive(Debug, Args)]
+pub struct ClientOpts {
+	#[arg(short, long, default_value_t = crate::tftp::consts::DEFAULT_BLOCK_SIZE)]
+	blocksize: u16,
+
+	#[arg(short, long, default_value_t = crate::tftp::consts::DEFAULT_TIMEOUT_SECS)]
+	timeout: u8,
+
+	#[arg(
+		short = 'T', long, default_value_t = false,
+		help = "Request (for RRQ) or hand over (for WRQ) the size of the file"
+	)]
+	transfer_size: bool,
+
+	//#[arg(short, long, value_enum, default_value_t = crate::tftp::Mode::Octet)]
+	//mode: crate::tftp::Mode,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum RunMode {
 	Server {
@@ -56,44 +74,37 @@ pub enum RunMode {
 		port: u16,
 	},
 	Client {
+		#[command(flatten)]
+		client_opts: ClientOpts,
+
 		#[command(subcommand)]
 		action: ClientAction
 	}
 }
 
+#[derive(Debug, Args)]
+pub struct ClientActionOpts {
+	file: PathBuf,
+
+	#[arg(help = "The remote server to connect to.")]
+	server: IpAddr,
+
+	#[arg(
+		default_value_t = crate::tftp::consts::TFTP_LISTEN_PORT,
+		help = "(optional) The remote port to connect to."
+	)]
+	port: u16,
+}
+
 #[derive(Subcommand, Debug)]
 pub enum ClientAction {
 	Get {
-		file: PathBuf,
-		server: IpAddr,
-
-		#[arg(short, long, default_value_t = crate::tftp::consts::TFTP_LISTEN_PORT)]
-		port: u16,
-
-		//#[arg(short, long, value_enum, default_value_t = crate::tftp::Mode::Octet)]
-		//mode: crate::tftp::Mode,
-
-		#[arg(short, long)]
-		blocksize: Option<u16>,
-
-		#[arg(short, long)]
-		timeout: Option<u8>
+		#[command(flatten)]
+		opts: ClientActionOpts,
 	},
 	Put {
-		file: PathBuf,
-		server: IpAddr,
-
-		#[arg(short, long, default_value_t = crate::tftp::consts::TFTP_LISTEN_PORT)]
-		port: u16,
-
-		//#[arg(short, long, value_enum, default_value_t = crate::tftp::Mode::Octet)]
-		//mode: crate::tftp::Mode,
-
-		#[arg(short, long)]
-		blocksize: Option<u16>,
-
-		#[arg(short, long)]
-		timeout: Option<u8>
+		#[command(flatten)]
+		opts: ClientActionOpts,
 	}
 }
 

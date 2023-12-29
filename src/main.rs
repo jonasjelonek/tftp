@@ -10,8 +10,9 @@ pub mod client;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-use tokio_util::sync::CancellationToken;
+#[allow(unused)]
 use log::{info, warn, error, debug, trace};
+use tokio_util::sync::CancellationToken;
 use clap::Parser;
 
 
@@ -39,7 +40,7 @@ async fn main() {
 			.canonicalize()
 		{
 			Ok(p) => p,
-			Err(e) => return error!(""),
+			Err(e) => return error!("Invalid root dir path '{}': {}", root_dir.display(), e),
 		};
 
 		match root.try_exists() {
@@ -68,7 +69,7 @@ async fn main() {
 		cli::RunMode::Server { bind, port } => {
 			server::run_server((bind, port).into(), cancel_token).await
 		},
-		cli::RunMode::Client { action } => todo!(),//client::run_client(action).await,
+		cli::RunMode::Client { client_opts, action } => todo!(),//client::run_client(action).await,
 	};
 
 	if let Err(e) = res {
