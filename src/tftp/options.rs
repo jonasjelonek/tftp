@@ -17,14 +17,12 @@ pub enum TftpOptionKind {
 	Blocksize,
 	Timeout,
 	TransferSize,
-	WindowSize,
 }
 
 pub enum TftpOption {
 	Blocksize(u16),
 	Timeout(Duration),
 	TransferSize(u32),
-	WindowSize(u16),
 }
 impl TftpOption {
 	pub fn kind(&self) -> TftpOptionKind {
@@ -32,7 +30,13 @@ impl TftpOption {
 			Self::Blocksize(_) => TftpOptionKind::Blocksize,
 			Self::Timeout(_) => TftpOptionKind::Timeout,
 			Self::TransferSize(_) => TftpOptionKind::TransferSize,
-			Self::WindowSize(_) => TftpOptionKind::WindowSize,
+		}
+	}
+	pub fn as_str_tuple(&self) -> (&'static str, String) {
+		match self {
+			Self::Blocksize(bs) => (consts::OPT_BLOCKSIZE_IDENT, bs.to_string()),
+			Self::Timeout(t) => (consts::OPT_TIMEOUT_IDENT, t.as_secs().to_string()),
+			Self::TransferSize(ts) => (consts::OPT_TRANSFERSIZE_IDENT, ts.to_string()),
 		}
 	}
 }
@@ -103,7 +107,6 @@ impl OptionNegotiation {
 				TftpOption::Blocksize(ref sz) => (consts::OPT_BLOCKSIZE_IDENT, sz.to_string()),
 				TftpOption::Timeout(ref to) => (consts::OPT_TIMEOUT_IDENT, to.as_secs().to_string()),
 				TftpOption::TransferSize(ref tsz) => (consts::OPT_TRANSFERSIZE_IDENT, tsz.to_string()),
-				_ => continue,
 			};
 
 			pkt.add_option(key, val.as_str());
@@ -116,8 +119,7 @@ impl OptionNegotiation {
 pub struct TftpOptions {
 	pub blocksize: u16,
 	pub timeout: Duration,
-	pub transfer_size: u32,
-	pub window_size: u16
+	pub transfer_size: u32
 }
 impl TftpOptions {
 	pub fn merge_from(&mut self, neg_opts: &OptionNegotiation) {
@@ -126,7 +128,6 @@ impl TftpOptions {
 				TftpOption::Blocksize(sz) => self.blocksize = *sz,
 				TftpOption::Timeout(to) => self.timeout = *to,
 				TftpOption::TransferSize(tsz) => self.transfer_size = *tsz,
-				_ => continue,
 			}
 		}
 	}
@@ -135,9 +136,8 @@ impl Default for TftpOptions {
 	fn default() -> Self {
 		Self { 
 			blocksize: consts::DEFAULT_BLOCK_SIZE, 
-			timeout: Duration::from_secs(consts::DEFAULT_TIMEOUT_SECS), 
+			timeout: Duration::from_secs(consts::DEFAULT_TIMEOUT_SECS as u64), 
 			transfer_size: 0,
-			window_size: 1,
 		}
 	}
 }

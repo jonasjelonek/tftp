@@ -1,17 +1,20 @@
 use std::net::{UdpSocket, SocketAddr, IpAddr};
-use std::path::PathBuf;
 use std::{fmt::Display, time::Duration};
 use std::io::{self, Read, Write, BufReader, BufWriter};
 use std::fs::File;
 
-use tokio_util::sync::CancellationToken;
+#[allow(unused)]
 use log::{info, warn, error, debug, trace};
+use tokio_util::sync::CancellationToken;
 
 pub mod consts {
 	pub const TFTP_LISTEN_PORT: u16 = 69;
 	pub const DEFAULT_BLOCK_SIZE: u16 = 512;
-	pub const DEFAULT_TIMEOUT_SECS: u64 = 5;
+	pub const DEFAULT_TIMEOUT_SECS: u8 = 5;
 	pub const DEFAULT_RETRANSMIT_TRIES: u8 = 3;
+
+	pub const TFTP_XFER_MODE_OCTET: &str = "octet";
+	pub const TFTP_XFER_MODE_NETASCII: &str = "netascii";
 
 	pub const OPT_BLOCKSIZE_IDENT: &str = "blksize";
 	pub const OPT_TIMEOUT_IDENT: &str = "timeout";
@@ -73,17 +76,23 @@ pub enum Mode {
 impl Mode {
 	pub fn try_from(input: &str) -> Option<Self> {
 		match &(input.to_ascii_lowercase())[..] {
-			"netascii" => Some(Self::NetAscii),
-			"octet" => Some(Self::Octet),
+			consts::TFTP_XFER_MODE_NETASCII => Some(Self::NetAscii),
+			consts::TFTP_XFER_MODE_OCTET => Some(Self::Octet),
 			_ => None
+		}
+	}
+	pub fn as_str(&self) -> &'static str {
+		match self {
+			Self::Octet => consts::TFTP_XFER_MODE_OCTET,
+			Self::NetAscii => consts::TFTP_XFER_MODE_NETASCII,
 		}
 	}
 }
 impl Display for Mode {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		write!(f, "{}", match self {
-			Self::Octet => "Octet",
-			Self::NetAscii => "NetAscii",
+			Self::Octet => consts::TFTP_XFER_MODE_OCTET,
+			Self::NetAscii => consts::TFTP_XFER_MODE_NETASCII,
 		})
 	}
 }
@@ -96,11 +105,6 @@ pub enum ReceiveError {
 	UnknownTid,
 	InvalidPacket(packet::PacketError),
 	LowerLayer,
-}
-
-pub enum BufFile {
-	Reader(BufReader<std::fs::File>),
-	Writer(BufWriter<std::fs::File>)
 }
 
 pub struct TftpConnection {
@@ -119,12 +123,7 @@ impl TftpConnection {
 		let socket = UdpSocket::bind(SocketAddr::new(local_addr, 0))?;
 		socket.connect(to)?;
 
-		Ok(Self {
-			socket,
-			options,
-			cxl_tok,
-			tx_mode: Mode::Octet
-		})
+		Ok(Self { socket, options, cxl_tok, tx_mode: Mode::Octet })
 	}
 
 	// ########################################################################
@@ -152,7 +151,7 @@ impl TftpConnection {
 	pub fn set_reply_timeout(&mut self, timeout: Duration) {
 		self.socket.set_nonblocking(false).unwrap();
 		self.socket.set_read_timeout(Some(timeout)).unwrap();
-		log::debug!("Timeout set to {}ms", timeout.as_millis());
+		debug!("Timeout set to {}ms", timeout.as_millis());
 	}
 
 	pub fn set_tx_mode(&mut self, tx_mode: Mode) { self.tx_mode = tx_mode }
@@ -161,7 +160,7 @@ impl TftpConnection {
 	// ###### ACTIONS #########################################################
 	// ########################################################################
 
-	pub fn receive_packet<'a>(&self, buf: &'a mut[u8], expect: Option<packet::PacketKind>) -> Result<packet::TftpPacket<'a>, ReceiveError> {
+	pub fn receive_packet<'a>(&self, buf: &'a mut [u8], expect: Option<packet::PacketKind>) -> Result<packet::TftpPacket<'a>, ReceiveError> {
 		let pkt: packet::TftpPacket;
 		
 		match self.socket.recv_from(buf) {
@@ -246,10 +245,6 @@ impl TftpConnection {
 }
 
 pub async fn receive_file(conn: TftpConnection, file: File) {
-	//info!("WRQ from {} to receive '{}'", peer, filename.to_string_lossy());
-	//if mode == Mode::NetAscii {
-	//	return Err(tftp_err!(IllegalOperation, Some(format!("NetAscii not supported"))));
-	//}
 	let mut file = BufWriter::new(file);
 	let blocksize = conn.opt_blocksize();
 	let mut blocknum: u16 = 0;
@@ -325,7 +320,8 @@ pub async fn send_file(conn: TftpConnection, file: File) {
 
 		file_buf.truncate(4);
 		if let Err(e) = file_read.by_ref().take(blocksize as u64).read_to_end(&mut file_buf) {
-
+			error!("send_file interrupted: {}", e);
+			return conn.drop_with_err(ErrorCode::StorageError, None);
 		}
 		trace!("file_buf has len {} and capacity {}", file_buf.len(), file_buf.capacity());
 
