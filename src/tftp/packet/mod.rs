@@ -545,21 +545,20 @@ pub struct MutableTftpError<'a> {
 	data_len: usize,
 }
 impl<'a> MutableTftpError<'a> {
-	pub fn with(buf: &'a mut [u8], err_code: super::ErrorCode, err_msg: Option<&str>) -> Result<Self, String> {
+	pub fn with(buf: &'a mut [u8], err_code: super::ErrorCode, err_msg: &str) -> Result<Self, String> {
 		let mut len: usize = 4;
-		if buf.len() < (4 + err_msg.unwrap_or("A").len()) {
+		if buf.len() < (5 + err_msg.len()) {
 			return Err(format!("Need larger buffer for a valid ERROR packet!"));
 		}
 
 		buf[0..=1].copy_from_slice(&super::consts::OPCODE_ERROR.to_be_bytes()[..]);
 		buf[2..=3].copy_from_slice(&(err_code as u16).to_be_bytes()[..]);
-		
-		if let Some(msg) = err_msg {
+		if err_msg.len() > 0 && err_msg.is_ascii() {
 			let max_len = buf.len() - 1;
-			let copied = super::utils::copy(msg.as_bytes(), &mut buf[4..max_len]);
-			buf[4 + copied] = 0;
+			let copied = super::utils::copy(err_msg.as_bytes(), &mut buf[4..max_len]);
 			len += copied;
 		}
+		buf[len] = 0;
 
 		Ok(Self { buf, data_len: len })
 	}

@@ -297,21 +297,21 @@ impl TftpConnection {
 		}
 	} */
 
-	pub fn send_error(&self, code: ErrorCode, msg: Option<String>) {
+	pub fn send_error(&self, code: ErrorCode, msg: &str) {
 		let mut buf: [u8; 64] = [0; 64];
 		let err_pkt = packet::MutableTftpError::with(
 			&mut buf,
 			code,
-			msg.as_deref()
+			msg
 		).unwrap();
 
 		let _ = self.socket.send(err_pkt.as_bytes());
-		error!("Tftp error: code {}; {}", code, msg.unwrap_or("".to_string()));
+		error!("Tftp error: code {}; '{}'", code, msg);
 	}
 
 	pub fn drop(self) { }
 
-	pub fn drop_with_err(self, code: ErrorCode, msg: Option<String>) {
+	pub fn drop_with_err(self, code: ErrorCode, msg: &str) {
 		self.send_error(code, msg);
 		return;
 	}
@@ -326,7 +326,7 @@ pub async fn receive_file<'a>(conn: TftpConnection, file: File, init_data: Optio
 	if let Some(first) = init_data {
 		if let Err(e) = file.write_all(first.data()) {
 			error!("failed to write to file due to lower layer error: {}", e);
-			return conn.drop_with_err(ErrorCode::StorageError, None);
+			return conn.drop_with_err(ErrorCode::StorageError, "");
 		}
 
 		blocknum = blocknum.wrapping_add(1);
@@ -358,7 +358,7 @@ pub async fn receive_file<'a>(conn: TftpConnection, file: File, init_data: Optio
 
 		if let Err(e) = file.write_all(pkt.data()) {
 			error!("failed to write to file due to lower layer error: {}", e);
-			return conn.drop_with_err(ErrorCode::StorageError, None);
+			return conn.drop_with_err(ErrorCode::StorageError, "");
 		}
 
 		blocknum = blocknum.wrapping_add(1);
@@ -384,10 +384,7 @@ pub async fn send_file(conn: TftpConnection, file: File) {
 	let blocksize = conn.opt_blocksize();
 
 	if conn.tx_mode() == Mode::NetAscii {
-		return conn.drop_with_err(
-			tftp::ErrorCode::IllegalOperation, 
-			Some(format!("NetAscii not supported"))
-		);
+		return conn.drop_with_err(tftp::ErrorCode::IllegalOperation, "NetAscii mode not supported");
 	}
 
 	let mut file_read = BufReader::new(file);
@@ -411,7 +408,7 @@ pub async fn send_file(conn: TftpConnection, file: File) {
 		file_buf.truncate(4);
 		if let Err(e) = file_read.by_ref().take(blocksize as u64).read_to_end(&mut file_buf) {
 			error!("send_file interrupted: {}", e);
-			return conn.drop_with_err(ErrorCode::StorageError, None);
+			return conn.drop_with_err(ErrorCode::StorageError, "");
 		}
 		trace!("file_buf has len {} and capacity {}", file_buf.len(), file_buf.capacity());
 
