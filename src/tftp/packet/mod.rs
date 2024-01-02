@@ -1,15 +1,34 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Display};
 use std::ffi::CStr;
 
 use crate::tftp::{consts, RequestKind, Mode};
 
-use super::{utils, options::{TftpOptions, TftpOption}};
-
 pub mod builder;
 
-// ############################################################################
-// #### IMMUTABLE PACKETS #####################################################
-// ############################################################################
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+pub enum PacketKind {
+	Req(RequestKind),
+	Data,
+	Ack,
+	Error,
+	OAck,
+}
+impl Display for PacketKind {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::Req(ref r) => write!(f, "REQ ({})", *r),
+			Self::Ack => write!(f, "ACK"),
+			Self::Data => write!(f, "DATA"),
+			Self::OAck => write!(f, "OACK"),
+			Self::Error => write!(f, "ERROR"),
+		}
+	}
+}
+
+pub trait Packet {
+	fn packet_kind(&self) -> PacketKind;
+	fn as_bytes(&self) -> &[u8];
+}
 
 #[derive(Debug)]
 pub enum PacketError {
@@ -21,6 +40,23 @@ pub enum PacketError {
 	InvalidCharacters,
 	UnknownTxMode,
 }
+impl Display for PacketError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::InvalidCharacters => write!(f, "Invalid characters"),
+			Self::InvalidOpcode => write!(f, "Invalid opcode"),
+			Self::UnexpectedOpcode => write!(f, "Unexpected opcode"),
+			Self::MalformedPacket => write!(f, "Malformed packet"),
+			Self::NotNullTerminated => write!(f, "Missing null termination"),
+			Self::UnexpectedEof => write!(f, "Unexpected EOF"),
+			Self::UnknownTxMode => write!(f, "Unknown transfer mode"),
+		}
+	}
+}
+
+// ############################################################################
+// #### IMMUTABLE PACKETS #####################################################
+// ############################################################################
 
 pub enum PacketBuf<'a> {
 	Borrowed(&'a [u8]),
@@ -67,8 +103,6 @@ impl<'a> TftpReq<'a> {
 		match u16::from_be_bytes([ buf[0], buf[1] ]) {
 			consts::OPCODE_RRQ => RequestKind::Rrq,
 			consts::OPCODE_WRQ => RequestKind::Wrq,
-			/* That should never happen, try_from_buf pre-checks the opcode and 
-			 * from_buf should only be used when opcode was checked before */
 			_ => panic!(),
 		}
 	}
@@ -125,6 +159,10 @@ impl<'a> TftpReq<'a> {
 		Ok(options)
 	}
 }
+impl<'a> Packet for TftpReq<'a> {
+	fn packet_kind(&self) -> PacketKind { PacketKind::Req(self.kind()) }
+	fn as_bytes(&self) -> &[u8] { self.inner() }
+}
 
 pub struct TftpData<'a> { buf: &'a [u8] }
 impl <'a> TftpData<'a> {
@@ -163,8 +201,24 @@ impl<'a> TftpAck<'a> {
 		}
 	}
 
-	pub fn from_buf_unchecked(buf: &'a [u8]) -> Self {
+	pub fn from_borrowed_unchecked(buf: &'a [u8]) -> Self {
 		Self { buf: PacketBuf::Borrowed(buf) }
+	}
+
+	pub fn from_vec_unchecked(vec: Vec<u8>) -> Self {
+		Self { buf: PacketBuf::Owned(vec) }
+	}
+
+	pub fn try_from_owned(vec: Vec<u8>) -> Result<Self, PacketError> {
+		if vec.len() < 4 {
+			return Err(PacketError::UnexpectedEof);
+		}
+		match u16::from_be_bytes([ vec[0], vec[1] ]) {
+			consts::OPCODE_ACK => (),
+			_ => return Err(PacketError::UnexpectedOpcode),
+		}
+
+		Ok(Self::from_vec_unchecked(vec))
 	}
 
 	pub fn try_from_buf(buf: &'a [u8]) -> Result<Self, PacketError> {
@@ -185,32 +239,88 @@ impl<'a> TftpAck<'a> {
 	}
 }
 
-pub struct TftpError<'a> { 
-	buf: &'a [u8],
+pub struct TftpOAck<'a> {
+	buf: PacketBuf<'a>,
+}
+impl<'a> TftpOAck<'a> {
+	pub fn from_buf(buf: &'a [u8]) -> Self {
+		Self { buf: PacketBuf::Borrowed(buf) }
+	}
+	fn inner(&self) -> &[u8] {
+		match self.buf {
+			PacketBuf::Borrowed(ref b) => *b,
+			PacketBuf::Owned(ref v) => &v[..],
+		}
+	}
+
+	pub fn try_from_buf(buf: &'a [u8]) -> Result<Self, PacketError> {
+		if buf.len() < 6 {
+			return Err(PacketError::UnexpectedEof);
+		}
+		if u16::from_be_bytes([ buf[0], buf[1] ]) != consts::OPCODE_OACK {
+			return Err(PacketError::UnexpectedOpcode);
+		}
+
+		Ok(Self::from_buf(buf))
+	}
+
+	pub fn options(&self) -> Result<HashMap<&str, &str>, PacketError> {
+		let buf = self.inner();
+		let mut options: HashMap<&str, &str> = HashMap::new();
+		let mut iter = buf[2..].split(|e| *e == 0x00);
+
+		while let Some(elem) = iter.next() {
+			if elem.len() < 2 {
+				break;
+			}
+
+			let key = std::str::from_utf8(elem)
+				.map_err(|_| PacketError::InvalidCharacters)?;
+			let Some(value_raw) = iter.next() else { 
+				return Err(PacketError::MalformedPacket) 
+			};
+			let value = std::str::from_utf8(value_raw)
+				.map_err(|_| PacketError::InvalidCharacters)?;
+
+			options.insert(key, value);
+		}
+
+		Ok(options)
+	}
+
+	pub fn as_bytes(&self) -> &[u8] {
+		self.inner()
+	}
+}
+impl<'a> Packet for TftpOAck<'a> {
+	fn packet_kind(&self) -> PacketKind {
+		PacketKind::OAck
+	}
+
+	fn as_bytes(&self) -> &[u8] {
+		self.inner()
+	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub enum PacketKind {
-	Req,
-	Data,
-	Ack,
-	Error,
-	OAck,
+pub struct TftpError<'a> { 
+	buf: &'a [u8],
 }
 
 pub enum TftpPacket<'a> {
 	Req(TftpReq<'a>),
 	Data(TftpData<'a>),
 	Ack(TftpAck<'a>),
+	OAck(TftpOAck<'a>),
 	Err(TftpError<'a>),
 }
 impl<'a> TftpPacket<'a> {
 	pub fn packet_kind(&self) -> PacketKind {
 		match self {
-			Self::Req(_) => PacketKind::Req,
+			Self::Req(rq) => PacketKind::Req(rq.kind()),
 			Self::Data(_) => PacketKind::Data,
 			Self::Ack(_) => PacketKind::Ack,
 			Self::Err(_) => PacketKind::Error,
+			Self::OAck(_) => PacketKind::OAck,
 		}
 	}
 
@@ -219,6 +329,7 @@ impl<'a> TftpPacket<'a> {
 			match u16::from_be_bytes([ buf[0], buf[1] ]) {
 				consts::OPCODE_RRQ | consts::OPCODE_WRQ => Self::Req(TftpReq::try_from_buf(buf)?),
 				consts::OPCODE_ACK => Self::Ack(TftpAck::try_from_buf(buf)?),
+				consts::OPCODE_OACK => Self::OAck(TftpOAck::try_from_buf(buf)?),
 				consts::OPCODE_DATA => Self::Data(TftpData::try_from_buf(buf)?),
 				_ => return Err(PacketError::InvalidOpcode),
 			}
@@ -240,10 +351,32 @@ impl<'a> MutablePacketBuf<'a> {
 			MutablePacketBuf::Borrowed(b) => *b,
 			MutablePacketBuf::Owned(v) => &mut v[..]
 		}
-	} 
+	}
+	pub fn to_immutable(self) -> PacketBuf<'a> {
+		match self {
+			MutablePacketBuf::Borrowed(b) => PacketBuf::Borrowed(b),
+			MutablePacketBuf::Owned(v) => PacketBuf::Owned(v)
+		}
+	}
+}
+impl AsRef<[u8]> for MutablePacketBuf<'_> {
+	fn as_ref(&self) -> &[u8] {
+		match self {
+			MutablePacketBuf::Borrowed(b) => *b,
+			MutablePacketBuf::Owned(v) => &v[..]
+		}
+	}
+}
+impl AsMut<[u8]> for MutablePacketBuf<'_> {
+	fn as_mut(&mut self) -> &mut [u8] {
+		match self {
+			MutablePacketBuf::Borrowed(b) => *b,
+			MutablePacketBuf::Owned(v) => &mut v[..]
+		}
+	}
 }
 
-pub struct MutableTftpReq<'a> {
+/* pub struct MutableTftpReq<'a> {
 	buf: MutablePacketBuf<'a>,
 }
 impl<'a> MutableTftpReq<'a> {
@@ -259,15 +392,25 @@ impl<'a> MutableTftpReq<'a> {
 			MutablePacketBuf::Owned(ref mut b) => (*b).as_mut_slice(),
 		}
 	}
-
-
-}
+} */
 
 pub struct MutableTftpData<'a> { 
-	buf: &'a mut [u8],
+	buf: MutablePacketBuf<'a>,
 	len: usize,
 }
 impl<'a> MutableTftpData<'a> {
+	fn inner(&self) -> &[u8] {
+		match self.buf {
+			MutablePacketBuf::Borrowed(ref b) => *b,
+			MutablePacketBuf::Owned(ref v) => &v[..],
+		}
+	}
+	fn inner_mut(&mut self) -> &mut [u8] {
+		match self.buf {
+			MutablePacketBuf::Borrowed(ref mut b) => *b,
+			MutablePacketBuf::Owned(ref mut v) => &mut v[..],
+		}
+	}
 
 	pub fn try_from(buf: &'a mut [u8], is_filled: bool) -> Result<Self, ()> {
 		if buf.len() < 4 {
@@ -278,7 +421,7 @@ impl<'a> MutableTftpData<'a> {
 
 		let buf_len = buf.len();
 		Ok(Self { 
-			buf,
+			buf: MutablePacketBuf::Borrowed(buf),
 			len: if is_filled { buf_len } else { 4 }
 		})
 	}
@@ -297,30 +440,41 @@ impl<'a> MutableTftpData<'a> {
 		buf[0..=3].copy_from_slice(&[ opcode[0], opcode[1], blocknum_bytes[0], blocknum_bytes[1] ]);
 		buf[4..].copy_from_slice(data);
 		
-		Self { buf, len: 4 + data.len() }
+		Self { buf: MutablePacketBuf::Borrowed(buf), len: 4 + data.len() }
 	}
 
 	pub fn set_blocknum(&mut self, blocknum: u16) {
-		self.buf[2..=3].copy_from_slice(blocknum.to_be_bytes().as_ref())
+		let buf = self.inner_mut();
+		buf[2..=3].copy_from_slice(blocknum.to_be_bytes().as_ref())
 	}
 
 	/// 
 	/// This will panic if the buffer is too small!
 	/// 
 	pub fn set_data(&mut self, data: &[u8]) {
-		if self.buf.len() < (4 + data.len()) {
+		let buf = self.inner_mut();
+		if buf.len() < (4 + data.len()) {
 			panic!();
 		}
 
-		super::utils::copy(data, &mut self.buf[4..]);
+		super::utils::copy(data, &mut buf[4..]);
 		self.len = 4 + data.len();
 	}
 
 	pub fn blocknum(&self) -> u16 {
-		u16::from_be_bytes([ self.buf[2], self.buf[3] ])
+		let buf = self.inner();
+		u16::from_be_bytes([ buf[2], buf[3] ])
 	}
 	pub fn len(&self) -> usize { self.len }
-	pub fn as_bytes(&self) -> &[u8] { &self.buf[..self.len] }
+}
+impl<'a> Packet for MutableTftpData<'a> {
+	fn packet_kind(&self) -> PacketKind {
+		PacketKind::Data
+	}
+
+	fn as_bytes(&self) -> &[u8] {
+		&self.inner()[..self.len]
+	}
 }
 
 pub struct MutableTftpAck {
@@ -339,8 +493,17 @@ impl MutableTftpAck {
 
 	pub fn as_bytes(&self) -> &[u8] { &self.buf[..] }
 }
+impl Packet for MutableTftpAck {
+	fn packet_kind(&self) -> PacketKind {
+		PacketKind::Ack
+	}
 
-pub struct MutableTftpOAck { 
+	fn as_bytes(&self) -> &[u8] {
+		&self.buf[..]
+	}
+}
+
+/* pub struct MutableTftpOAck { 
 	data: Vec<u8>,
 	n_options: u8,
 }
@@ -374,7 +537,7 @@ impl MutableTftpOAck {
 	pub fn num_of_options(&self) -> u8 { self.n_options }
 	pub fn len(&self) -> usize { self.data.len() }
 	pub fn as_bytes(&self) -> &[u8] { &self.data[..] }
-}
+} */
 
 
 pub struct MutableTftpError<'a> { 
@@ -420,7 +583,7 @@ impl<'a> MutableTftpError<'a> {
 pub enum MutableTftpPacket<'a> {
 	Data(MutableTftpData<'a>),
 	Ack(MutableTftpAck),
-	OAck(MutableTftpOAck),
+	//OAck(MutableTftpOAck),
 	Err(MutableTftpError<'a>),
 }
 impl<'a> MutableTftpPacket<'a> {
@@ -428,7 +591,7 @@ impl<'a> MutableTftpPacket<'a> {
 		match self {
 			Self::Data(p) => p.as_bytes(),
 			Self::Err(p) => p.as_bytes(),
-			Self::OAck(p) => p.as_bytes(),
+			//Self::OAck(p) => p.as_bytes(),
 			Self::Ack(p) => p.as_bytes(),
 		}
 	}

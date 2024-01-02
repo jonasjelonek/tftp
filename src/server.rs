@@ -12,7 +12,7 @@ use log::{info, warn, error, debug, trace};
 use crate::tftp::{
 	self,
 	/* submodules */
-	options::*,
+	options::{*, self},
 	packet as pkt,
 
 	Mode, RequestKind, TftpConnection
@@ -50,21 +50,23 @@ impl TftpServer {
 			return Ok(false);
 		}
 		
-		let mut negotiation = OptionNegotiation
-			::parse_options(raw_opts)
+		let mut requested_options = options
+			::parse_tftp_options(raw_opts)
 			.map_err(|_| OptionError::InvalidOption)?;
 
 		// Set transfer size if client requested it
 		if req_kind == RequestKind::Rrq {
-			if let Some(opt) = negotiation.find_option_mut(TftpOptionKind::TransferSize) &&
-			   let TftpOption::TransferSize(tsz) = opt &&
-			   *tsz == 0
-			{ *tsz = transfer_size; }
+			if let Some(tf_size) = requested_options.iter_mut().find(|e| e.kind() == TftpOptionKind::TransferSize) {
+				*tf_size = TftpOption::TransferSize(transfer_size);
+			}
 		} else {
 			// Check if enough space is available
 		}
 
-		let oack_pkt = pkt::MutableTftpPacket::OAck(negotiation.build_oack_packet());
+		let oack_pkt = pkt::builder::TftpOAckBuilder
+			::new()
+			.options(&requested_options[..])
+			.build();
 		conn.send_packet(&oack_pkt);
 
 		if req_kind == RequestKind::Rrq {
@@ -74,19 +76,19 @@ impl TftpServer {
 				.map_err(|_| OptionError::NoAck)?;
 		}
 		
-		conn.options_mut().merge_from(&negotiation);
+		conn.set_options(&requested_options[..]);
 		Ok(true)
 	}
 
 	pub async fn handle_request<'a>(&self, req: pkt::TftpReq<'a>, client: SocketAddr) {
 		let mut conn = match TftpConnection::new(
-			self.listen_addr, client,
-			TftpOptions::default(),
+			self.listen_addr,
 			self.cancel_token.clone()
 		) {
 			Ok(con) => con,
 			Err(e) => return error!("failed to handle request due to lower layer error: {}", e),
 		};
+		conn.connect_to(client).unwrap();
 
 		match req.mode() {
 			Ok(mode) if mode == Mode::Octet => (),
@@ -135,9 +137,10 @@ impl TftpServer {
 			Err(_) => return conn.drop(),
 			Ok(true) => (),
 			Ok(false) => {
-				let inner_ack = pkt::MutableTftpAck::new(0);
-				let wrq_ack = pkt::MutableTftpPacket::Ack(inner_ack);
-				conn.send_packet(&wrq_ack);
+				if req.kind() == RequestKind::Wrq {
+					let wrq_ack = pkt::MutableTftpAck::new(0);
+					conn.send_packet(&wrq_ack);
+				}
 			}
 		};
 		conn.set_reply_timeout(conn.opt_timeout());
@@ -146,7 +149,7 @@ impl TftpServer {
 		info!("{:?} from {}", req.kind(), conn.peer());
 		match req.kind() {
 			tftp::RequestKind::Rrq => tftp::send_file(conn, file).await,
-			tftp::RequestKind::Wrq => tftp::receive_file(conn, file).await,
+			tftp::RequestKind::Wrq => tftp::receive_file(conn, file, None).await,
 		};
 	}
 }

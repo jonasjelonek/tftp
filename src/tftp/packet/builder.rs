@@ -1,5 +1,6 @@
-use super::{Mode, RequestKind, TftpReq, PacketBuf};
+use super::{Mode, RequestKind, TftpReq, PacketBuf, TftpOAck};
 use super::super::options::TftpOption;
+use super::super::consts;
 
 
 pub struct TftpReqBuilder<'a> {
@@ -39,7 +40,7 @@ impl<'a> TftpReqBuilder<'a> {
 		self
 	}
 
-	pub fn build(mut self) -> TftpReq<'a> {
+	pub fn build<'b>(mut self) -> TftpReq<'b> {
 		self.buf.extend((self.kind as u16).to_be_bytes());
 		self.buf.extend(self.filename.as_bytes());
 		self.buf.push(0);
@@ -57,5 +58,41 @@ impl<'a> TftpReqBuilder<'a> {
 		}
 
 		TftpReq { buf: PacketBuf::Owned(self.buf) }
+	}
+}
+
+pub struct TftpOAckBuilder {
+	options: Vec<TftpOption>,
+}
+impl TftpOAckBuilder {
+	pub fn new() -> Self {
+		Self {
+			options: Vec::with_capacity(3),
+		}
+	}
+
+	pub fn option(mut self, option: TftpOption) -> Self {
+		self.options.push(option);
+		self
+	}
+
+	pub fn options(mut self, options: &[TftpOption]) -> Self {
+		self.options.extend(options);
+		self
+	}
+
+	pub fn build(self) -> TftpOAck<'static> {
+		let mut buf: Vec<u8> = Vec::with_capacity(64);
+
+		buf.extend(consts::OPCODE_OACK.to_be_bytes());
+		for opt in self.options {
+			let tuple = opt.as_str_tuple();
+			buf.extend(tuple.0.as_bytes());
+			buf.push(0);
+			buf.extend(tuple.0.as_bytes());
+			buf.push(0);
+		}
+
+		TftpOAck { buf: PacketBuf::Owned(buf) }
 	}
 }
