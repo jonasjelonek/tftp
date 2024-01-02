@@ -42,7 +42,7 @@ impl TftpClient {
 
 		match req_params.req_kind {
 			RequestKind::Rrq => self.get(conn, req_params.server, req_params.file, req_params.options).await,
-			RequestKind::Wrq => todo!(),//self.put(conn, req_params.file, req_params.options).await,
+			RequestKind::Wrq => self.put(conn, req_params.server, req_params.file, req_params.options).await,
 		}
 	}
 
@@ -62,20 +62,20 @@ impl TftpClient {
 			builder = builder.options(options);
 		}
 		let pkt = builder.build();
-
 		conn.send_request_to(&pkt, server);
+
 		/* Handle the first packet coming from the server here instead of in receive_file.
 		 * We don't know which port the server will use to reply, and handling this should
 		 * not be done in TftpConnection's receive functions.
 		 * In case we requested options, we need to handle the first packet anyway. */
-		let mut buf = [0; 4 + tftp::consts::DEFAULT_BLOCK_SIZE as usize];
+		let mut buf = [0u8; 4 + tftp::consts::DEFAULT_BLOCK_SIZE as usize];
 		match conn.receive_packet_from(&mut buf, None) {
 			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::OAck => {
 				if remote.ip() != server.ip() {
 					return conn.drop();
 				}
-
 				conn.connect_to(remote).unwrap();
+
 				let TftpPacket::OAck(oack) = pkt else { unreachable!() };
 				let opts = tftp::options::parse_tftp_options(oack.options().unwrap()).unwrap();
 				conn.set_options(&opts[..]);
@@ -89,18 +89,23 @@ impl TftpClient {
 				if remote.ip() != server.ip() {
 					return conn.drop();
 				}
-
 				conn.connect_to(server).unwrap();
+
 				let TftpPacket::Data(data) = pkt else { unreachable!() };
 				tftp::receive_file(conn, file, Some(data)).await
 			},
 			Ok((pkt, _)) => error!("Received packet of unexpected kind {}", pkt.packet_kind()),
-			Err(e) => error!("Server didn't properly acknowledged options ({})", e),
+			Err(e) => error!("Server didn't properly properly responded to request ({})", e),
 		};
 	}
 
-	async fn put(&mut self, conn: TftpConnection, file: PathBuf, options: &[TftpOption]) {
-		let filename = file.to_string_lossy();
+	async fn put(&mut self, mut conn: TftpConnection, server: SocketAddr, file_path: PathBuf, options: &[TftpOption]) {
+		let filename = file_path.file_name().unwrap().to_string_lossy();
+		let file = match OpenOptions::new().read(true).open(&file_path) {
+			Ok(f) => f,
+			Err(e) => return error!("Could not open file for GET request: {}", e),
+		};
+
 		let mut opt_req: bool = false;
 		let mut builder = TftpReqBuilder::new()
 			.kind(RequestKind::Wrq)
@@ -117,9 +122,31 @@ impl TftpClient {
 			opt_req = true;
 		}
 		let pkt = builder.build();
+		conn.send_request_to(&pkt, server);
 
-		if opt_req {
+		let mut buf = [0u8; 64];
+		match conn.receive_packet_from(&mut buf, None) {
+			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::OAck => {
+				if remote.ip() != server.ip() {
+					return conn.drop();
+				}
+				conn.connect_to(remote).unwrap();
 
+				let TftpPacket::OAck(oack) = pkt else { unreachable!() };
+				let opts = tftp::options::parse_tftp_options(oack.options().unwrap()).unwrap();
+				conn.set_options(&opts[..]);
+
+				tftp::send_file(conn, file).await;
+			},
+			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::Ack => {
+				if remote.ip() != server.ip() {
+					return conn.drop();
+				}
+				conn.connect_to(server).unwrap();
+				tftp::send_file(conn, file).await
+			},
+			Ok((pkt, _)) => error!("Received packet of unexpected kind {}", pkt.packet_kind()),
+			Err(e) => error!("Server didn't properly responded to request ({})", e),
 		}
 	}
 }

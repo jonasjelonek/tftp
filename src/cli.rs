@@ -66,9 +66,6 @@ pub struct ClientOpts {
 		help = "Request (for RRQ) or hand over (for WRQ) the size of the file."
 	)]
 	pub transfer_size: bool,
-
-	//#[arg(short, long, value_enum, default_value_t = crate::tftp::Mode::Octet)]
-	//mode: crate::tftp::Mode,
 }
 
 #[derive(Subcommand, Debug)]

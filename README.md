@@ -16,9 +16,9 @@ If you think there is room for improvement, please open an issue or a pull reque
 - [x] Server mode
   - [x] RRQ/GET
   - [x] WRQ/PUT
-- [ ] Client mode
-  - [ ] RRQ/GET
-  - [ ] WRQ/PUT 
+- [x] Client mode
+  - [x] RRQ/GET
+  - [x] WRQ/PUT 
 - [x] TFTP options
   - [x] Blocksize
   - [x] Timeout
@@ -38,5 +38,5 @@ It supports parallel operation with a arbitrary number of peers.
 
 - ~~WRQ/PUT support - allow the client to store a file on the server~~ - DONE
 - ~~Window size option support~~ - NOT PLANNED ATM
-- get rid of all the `unwrap`s - they are bad style
+- get rid of all the `unwrap`s - they are bad style but good during development
 - improve general output, especially for debugging
