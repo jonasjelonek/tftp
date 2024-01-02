@@ -1,10 +1,14 @@
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{arg, command, ValueEnum, Args};
 use clap::{Parser, Subcommand};
 
 use simple_logger::SimpleLogger;
+
+use crate::tftp;
+use crate::tftp::options::TftpOption;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -49,16 +53,19 @@ impl From<DebugLevel> for log::LevelFilter {
 #[derive(Debug, Args)]
 pub struct ClientOpts {
 	#[arg(short, long, default_value_t = crate::tftp::consts::DEFAULT_BLOCK_SIZE)]
-	blocksize: u16,
+	pub blocksize: u16,
 
-	#[arg(short, long, default_value_t = crate::tftp::consts::DEFAULT_TIMEOUT_SECS)]
-	timeout: u8,
+	#[arg(
+		short, long, default_value_t = crate::tftp::consts::DEFAULT_TIMEOUT_SECS,
+		help = "Timout waiting for packet (in seconds)."
+	)]
+	pub timeout: u8,
 
 	#[arg(
 		short = 'T', long, default_value_t = false,
-		help = "Request (for RRQ) or hand over (for WRQ) the size of the file"
+		help = "Request (for RRQ) or hand over (for WRQ) the size of the file."
 	)]
-	transfer_size: bool,
+	pub transfer_size: bool,
 
 	//#[arg(short, long, value_enum, default_value_t = crate::tftp::Mode::Octet)]
 	//mode: crate::tftp::Mode,
@@ -84,16 +91,16 @@ pub enum RunMode {
 
 #[derive(Debug, Args)]
 pub struct ClientActionOpts {
-	file: PathBuf,
+	pub file: PathBuf,
 
 	#[arg(help = "The remote server to connect to.")]
-	server: IpAddr,
+	pub server: IpAddr,
 
 	#[arg(
 		default_value_t = crate::tftp::consts::TFTP_LISTEN_PORT,
 		help = "(optional) The remote port to connect to."
 	)]
-	port: u16,
+	pub port: u16,
 }
 
 #[derive(Subcommand, Debug)]
@@ -106,6 +113,38 @@ pub enum ClientAction {
 		#[command(flatten)]
 		opts: ClientActionOpts,
 	}
+}
+impl ClientAction {
+	pub fn as_req_kind(&self) -> tftp::RequestKind {
+		match self {
+			Self::Get { opts } => tftp::RequestKind::Rrq,
+			Self::Put { opts } => tftp::RequestKind::Wrq,
+		}
+	}
+
+	pub fn get_opts(&self) -> &ClientActionOpts {
+		match self {
+			Self::Get { opts } => opts,
+			Self::Put { opts } => opts,
+		}
+	}
+}
+
+pub fn parse_tftp_options(cli_opts: ClientOpts) -> Vec<TftpOption> {
+	let mut v: Vec<TftpOption> = vec![];
+
+	/* keep first to find it easier */
+	if cli_opts.transfer_size {
+		v.push(TftpOption::TransferSize(0));
+	}
+	if cli_opts.blocksize != tftp::consts::DEFAULT_BLOCK_SIZE {
+		v.push(TftpOption::Blocksize(cli_opts.blocksize));
+	}
+	if cli_opts.timeout != tftp::consts::DEFAULT_TIMEOUT_SECS {
+		v.push(TftpOption::Timeout(Duration::from_secs(cli_opts.timeout as u64)))
+	}
+
+	v
 }
 
 pub fn init_logger(debug_level: DebugLevel) {
