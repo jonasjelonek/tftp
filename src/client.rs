@@ -1,5 +1,4 @@
 use std::fs::OpenOptions;
-use std::io::Write;
 use std::path::PathBuf;
 use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 
@@ -71,8 +70,12 @@ impl TftpClient {
 		 * In case we requested options, we need to handle the first packet anyway. */
 		let mut buf = [0; 4 + tftp::consts::DEFAULT_BLOCK_SIZE as usize];
 		match conn.receive_packet_from(&mut buf, None) {
-			Ok((pkt, server)) if pkt.packet_kind() == PacketKind::OAck => {
-				conn.connect_to(server).unwrap();
+			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::OAck => {
+				if remote.ip() != server.ip() {
+					return conn.drop();
+				}
+
+				conn.connect_to(remote).unwrap();
 				let TftpPacket::OAck(oack) = pkt else { unreachable!() };
 				let opts = tftp::options::parse_tftp_options(oack.options().unwrap()).unwrap();
 				conn.set_options(&opts[..]);
@@ -82,7 +85,11 @@ impl TftpClient {
 
 				tftp::receive_file(conn, file, None).await;
 			},
-			Ok((pkt, server)) if pkt.packet_kind() == PacketKind::Data => {
+			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::Data => {
+				if remote.ip() != server.ip() {
+					return conn.drop();
+				}
+
 				conn.connect_to(server).unwrap();
 				let TftpPacket::Data(data) = pkt else { unreachable!() };
 				tftp::receive_file(conn, file, Some(data)).await
