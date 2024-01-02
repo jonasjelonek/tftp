@@ -54,7 +54,6 @@ impl TftpClient {
 			Err(e) => return error!("Could not open file for GET request: {}", e),
 		};
 
-		let mut opt_req: bool = false;
 		let mut builder = TftpReqBuilder::new()
 			.kind(RequestKind::Rrq)
 			.mode(Mode::Octet)
@@ -62,37 +61,10 @@ impl TftpClient {
 		
 		if options.len() > 0 {
 			builder = builder.options(options);
-			opt_req = true;
 		}
 		let pkt = builder.build();
 
-		let _ = conn.send_request_to(&pkt, server);
-		/*if opt_req {
-			let mut buf = [0; 4 + tftp::consts::DEFAULT_BLOCK_SIZE as usize];
-			match conn.receive_packet_from(&mut buf, None) {
-				Ok((pkt, server)) if pkt.packet_kind() == PacketKind::OAck => {
-					conn.connect_to(server).unwrap();
-					let TftpPacket::OAck(oack) = pkt else { unreachable!() };
-					let opts = tftp::options::parse_tftp_options(oack.options().unwrap()).unwrap();
-					conn.set_options(&opts[..]);
-
-					let ack_pkt = tftp::packet::MutableTftpAck::new(0);
-					let _ = conn.send_packet(&ack_pkt);
-
-					tftp::receive_file(conn, file, None).await;
-				},
-				Ok((pkt, server)) if pkt.packet_kind() == PacketKind::Data => {
-					println!("Received packet!!!");
-					conn.connect_to(server).unwrap();
-					let TftpPacket::Data(data) = pkt else { unreachable!() };
-					tftp::receive_file(conn, file, Some(data)).await
-				},
-				Ok((pkt, _)) => error!("Received packet of unexpected kind {}", pkt.packet_kind()),
-				Err(e) => error!("Server didn't properly acknowledged options ({})", e),
-			};
-		} else {
-			tftp::receive_file(conn, file, None).await;
-		}*/
+		conn.send_request_to(&pkt, server);
 		/* Handle the first packet coming from the server here instead of in receive_file.
 		 * We don't know which port the server will use to reply, and handling this should
 		 * not be done in TftpConnection's receive functions.
@@ -111,7 +83,6 @@ impl TftpClient {
 				tftp::receive_file(conn, file, None).await;
 			},
 			Ok((pkt, server)) if pkt.packet_kind() == PacketKind::Data => {
-				println!("Received DATA packet");
 				conn.connect_to(server).unwrap();
 				let TftpPacket::Data(data) = pkt else { unreachable!() };
 				tftp::receive_file(conn, file, Some(data)).await
@@ -150,22 +121,13 @@ pub async fn run_client(action: cli::ClientAction, opts: cli::ClientOpts, cxl_to
 	let local_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
 	let mut client = TftpClient::new(local_addr, cxl_token);
 
-	let req_kind = action.as_req_kind();
 	let req_opts = action.get_opts();
-	//if !req_opts.file.is_file() {
-	//	panic!();
-	//}
-
 	let mut file_path = crate::working_dir().clone();
-	file_path.push(PathBuf::from(&shellexpand::tilde(&req_opts.file.to_string_lossy())[..]));
-	//file_path = match file_path.canonicalize() {
-	//	Ok(p) => p,
-	//	Err(e) => return Err("Invalid file path!".to_string()),
-	//};
+	file_path.push(&req_opts.file.to_string_lossy()[..]);
 
 	let tftp_options = cli::parse_tftp_options(opts);
 	let req_params = TftpRequestParameters {
-		req_kind,
+		req_kind: action.as_req_kind(),
 		server: (req_opts.server, req_opts.port).into(),
 		file: file_path,
 		options: &tftp_options[..]
