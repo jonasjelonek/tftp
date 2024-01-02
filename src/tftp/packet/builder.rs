@@ -89,7 +89,7 @@ impl TftpOAckBuilder {
 			let tuple = opt.as_str_tuple();
 			buf.extend(tuple.0.as_bytes());
 			buf.push(0);
-			buf.extend(tuple.0.as_bytes());
+			buf.extend(tuple.1.as_bytes());
 			buf.push(0);
 		}
 
