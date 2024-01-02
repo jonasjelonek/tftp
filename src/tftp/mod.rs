@@ -132,7 +132,7 @@ impl Display for ReceiveError {
 pub struct TftpConnection {
 	tx_mode: Mode,
 	socket: UdpSocket,
-	pub retry_attempts: u8,
+	retry_attempts: u8,
 
 	options: TftpOptions,
 
@@ -145,13 +145,15 @@ impl TftpConnection {
 	pub fn new(local_addr: IpAddr, cxl_tok: CancellationToken) -> io::Result<Self> {
 		let socket = UdpSocket::bind(SocketAddr::new(local_addr, 0))?;
 
-		Ok(Self {
+		let mut conn = Self {
 			socket,
 			options: TftpOptions::default(),
 			retry_attempts: 5,
 			cxl_tok,
 			tx_mode: Mode::Octet
-		})
+		};
+		conn.set_reply_timeout(conn.opt_timeout());
+		Ok(conn)
 	}
 
 	// ########################################################################
@@ -189,6 +191,8 @@ impl TftpConnection {
 				TftpOption::TransferSize(ts) => self.options.transfer_size = *ts,
 			}
 		}
+
+		self.set_reply_timeout(self.opt_timeout());
 	}
 
 	// ########################################################################
@@ -227,8 +231,8 @@ impl TftpConnection {
 		Ok(recv.0)
 	}
 
-	pub fn send_request_to(&self, req: &packet::TftpReq<'_>, to: SocketAddr) {
-		self.socket.send_to(req.as_bytes(), to).unwrap();
+	pub fn send_request_to(&self, req: &packet::TftpReq<'_>, to: SocketAddr) -> io::Result<()> {
+		self.socket.send_to(req.as_bytes(), to).map(|_| ())
 	}
 
 	pub fn send_packet(&self, pkt: &impl packet::Packet) -> io::Result<()> {
