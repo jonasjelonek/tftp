@@ -103,7 +103,7 @@ impl<'a> TftpReq<'a> {
 		match u16::from_be_bytes([ buf[0], buf[1] ]) {
 			consts::OPCODE_RRQ => RequestKind::Rrq,
 			consts::OPCODE_WRQ => RequestKind::Wrq,
-			_ => panic!(),
+			_ => unreachable!(),
 		}
 	}
 
