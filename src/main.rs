@@ -69,7 +69,7 @@ async fn main() {
 		cli::RunMode::Server { bind, port } => {
 			server::run_server((bind, port).into(), cancel_token).await
 		},
-		cli::RunMode::Client { client_opts, action } => todo!(),//client::run_client(action).await,
+		cli::RunMode::Client { client_opts, action } => client::run_client(action, client_opts, cancel_token).await,
 	};
 
 	if let Err(e) = res {
