@@ -133,12 +133,12 @@ impl<'a> TftpOAckBuilder<'a> {
 		match buf {
 			Some(buf) => {
 				self.write_to_buf(buf);
-				TftpOAck { buf: PacketBuf::Borrowed(buf) }
+				TftpOAck::from_borrowed(buf)
 			},
 			None => {
 				let mut buf = vec![0; 64];
 				self.write_to_buf(&mut buf[..]);
-				TftpOAck { buf: PacketBuf::Owned(buf) }
+				TftpOAck::from_owned(buf)
 			}
 		}
 	}

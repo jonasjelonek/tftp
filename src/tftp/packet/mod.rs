@@ -55,7 +55,9 @@ impl Display for PacketError {
 }
 
 // ############################################################################
+// ############################################################################
 // #### IMMUTABLE PACKETS #####################################################
+// ############################################################################
 // ############################################################################
 
 pub enum PacketBuf<'a> {
@@ -70,6 +72,10 @@ impl<'a> PacketBuf<'a> {
 		}
 	} 
 }
+
+// ############################################################################
+// #### TFTP REQUEST (RRQ/WRQ) ################################################
+// ############################################################################
 
 pub struct TftpReq<'a> {
 	inner: PacketBuf<'a>,
@@ -196,13 +202,29 @@ impl TryFrom<Vec<u8>> for TftpReq <'_> {
 	}
 }
 
-pub struct TftpData<'a> { buf: &'a [u8] }
+// ############################################################################
+// #### TFTP DATA #############################################################
+// ############################################################################
+
+pub struct TftpData<'a> { 
+	inner: PacketBuf<'a>
+}
 impl <'a> TftpData<'a> {
-	pub fn from_buf_unchecked(buf: &'a [u8]) -> Self {
-		Self { buf }
+	#[inline] pub fn from_borrowed(buf: &'a [u8]) -> Self {
+		Self { inner: PacketBuf::Borrowed(buf) }
+	}
+	#[inline] pub fn from_owned(buf: Vec<u8>) -> Self {
+		Self { inner: PacketBuf::Owned(buf) }
 	}
 
-	pub fn try_from_buf(buf: &'a [u8]) -> Result<Self, PacketError> {
+	fn inner(&self) -> &[u8] {
+		match self.inner {
+			PacketBuf::Borrowed(ref b) => *b,
+			PacketBuf::Owned(ref v) => &v[..],
+		}
+	}
+
+	fn check_from_slice(buf: &'a [u8]) -> Result<(), PacketError> {
 		if buf.len() < 4 {
 			return Err(PacketError::UnexpectedEof);
 		}
@@ -210,22 +232,53 @@ impl <'a> TftpData<'a> {
 			consts::OPCODE_DATA => (),
 			_ => return Err(PacketError::UnexpectedOpcode),
 		}
-
-		Ok(Self { buf })
+		Ok(())
 	}
 
-	pub fn blocknum(&self) -> u16 {
-		u16::from_be_bytes([ self.buf[2], self.buf[3] ])
+	#[inline] pub fn blocknum(&self) -> u16 {
+		let buf = self.inner();
+		u16::from_be_bytes([ buf[2], buf[3] ])
 	}
 
-	pub fn data(&self) -> &[u8] { &self.buf[4..] }
-	pub fn data_len(&self) -> usize { self.buf.len() - 4 }
+	#[inline] pub fn data(&self) -> &[u8] { &self.inner()[4..] }
+	#[inline] pub fn data_len(&self) -> usize { self.inner().len() - 4 }
 }
+impl<'a> Packet for TftpData<'a> {
+	fn packet_kind(&self) -> PacketKind { PacketKind::Data }
+	fn as_bytes(&self) -> &[u8] { self.inner() }
+}
+impl<'a> TryFrom<&'a [u8]> for TftpData<'a> {
+	type Error = PacketError;
+
+	fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+		TftpData::check_from_slice(buf)?;
+		Ok(Self::from_borrowed(buf))
+	}
+}
+impl TryFrom<Vec<u8>> for TftpData<'_> {
+	type Error = PacketError;
+
+	fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
+		TftpData::check_from_slice(&vec[..])?;
+		Ok(Self::from_owned(vec))
+	}
+}
+
+// ############################################################################
+// #### TFTP ACK ##############################################################
+// ############################################################################
 
 pub struct TftpAck<'a> {
 	buf: PacketBuf<'a>
 }
 impl<'a> TftpAck<'a> {
+	#[inline] pub fn from_borrowed(buf: &'a [u8]) -> Self {
+		Self { buf: PacketBuf::Borrowed(buf) }
+	}
+	#[inline] pub fn from_owned(vec: Vec<u8>) -> Self {
+		Self { buf: PacketBuf::Owned(vec) }
+	}
+	
 	fn inner(&self) -> &[u8] {
 		match self.buf {
 			PacketBuf::Borrowed(ref b) => *b,
@@ -233,26 +286,7 @@ impl<'a> TftpAck<'a> {
 		}
 	}
 
-	pub fn from_borrowed_unchecked(buf: &'a [u8]) -> Self {
-		Self { buf: PacketBuf::Borrowed(buf) }
-	}
-	pub fn from_vec_unchecked(vec: Vec<u8>) -> Self {
-		Self { buf: PacketBuf::Owned(vec) }
-	}
-
-	pub fn try_from_owned(vec: Vec<u8>) -> Result<Self, PacketError> {
-		if vec.len() < 4 {
-			return Err(PacketError::UnexpectedEof);
-		}
-		match u16::from_be_bytes([ vec[0], vec[1] ]) {
-			consts::OPCODE_ACK => (),
-			_ => return Err(PacketError::UnexpectedOpcode),
-		}
-
-		Ok(Self::from_vec_unchecked(vec))
-	}
-
-	pub fn try_from_buf(buf: &'a [u8]) -> Result<Self, PacketError> {
+	pub fn check_from_slice(buf: &'a [u8]) -> Result<(), PacketError> {
 		if buf.len() < 4 {
 			return Err(PacketError::UnexpectedEof);
 		}
@@ -260,8 +294,7 @@ impl<'a> TftpAck<'a> {
 			consts::OPCODE_ACK => (),
 			_ => return Err(PacketError::UnexpectedOpcode),
 		}
-
-		Ok(Self { buf: PacketBuf::Borrowed(buf) })
+		Ok(())
 	}
 
 	pub fn blocknum(&self) -> u16 {
@@ -269,30 +302,57 @@ impl<'a> TftpAck<'a> {
 		u16::from_be_bytes([ buf[2], buf[3] ])
 	}
 }
+impl<'a> Packet for TftpAck<'a> {
+	fn packet_kind(&self) -> PacketKind { PacketKind::Ack }
+	fn as_bytes(&self) -> &[u8] { self.inner() }
+}
+impl<'a> TryFrom<&'a [u8]> for TftpAck<'a> {
+	type Error = PacketError;
+
+	fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+		TftpAck::check_from_slice(buf)?;
+		Ok(Self::from_borrowed(buf))
+	}
+}
+impl TryFrom<Vec<u8>> for TftpAck<'_> {
+	type Error = PacketError;
+
+	fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
+		TftpAck::check_from_slice(&vec[..])?;
+		Ok(Self::from_owned(vec))
+	}
+}
+
+// ############################################################################
+// #### TFTP OACK #############################################################
+// ############################################################################
 
 pub struct TftpOAck<'a> {
-	buf: PacketBuf<'a>,
+	inner: PacketBuf<'a>,
 }
 impl<'a> TftpOAck<'a> {
-	pub fn from_buf(buf: &'a [u8]) -> Self {
-		Self { buf: PacketBuf::Borrowed(buf) }
+	#[inline] pub fn from_borrowed(buf: &'a [u8]) -> Self {
+		Self { inner: PacketBuf::Borrowed(buf) }
 	}
+	#[inline] pub fn from_owned(vec: Vec<u8>) -> Self {
+		Self { inner: PacketBuf::Owned(vec) }
+	}
+
 	fn inner(&self) -> &[u8] {
-		match self.buf {
+		match self.inner {
 			PacketBuf::Borrowed(ref b) => *b,
 			PacketBuf::Owned(ref v) => &v[..],
 		}
 	}
 
-	pub fn try_from_buf(buf: &'a [u8]) -> Result<Self, PacketError> {
+	fn check_from_slice(buf: &'a [u8]) -> Result<(), PacketError> {
 		if buf.len() < 6 {
 			return Err(PacketError::UnexpectedEof);
 		}
 		if u16::from_be_bytes([ buf[0], buf[1] ]) != consts::OPCODE_OACK {
 			return Err(PacketError::UnexpectedOpcode);
 		}
-
-		Ok(Self::from_buf(buf))
+		Ok(())
 	}
 
 	pub fn options(&self) -> Result<HashMap<&str, &str>, PacketError> {
@@ -318,20 +378,31 @@ impl<'a> TftpOAck<'a> {
 
 		Ok(options)
 	}
-
-	pub fn as_bytes(&self) -> &[u8] {
-		self.inner()
-	}
 }
 impl<'a> Packet for TftpOAck<'a> {
-	fn packet_kind(&self) -> PacketKind {
-		PacketKind::OAck
-	}
+	#[inline] fn packet_kind(&self) -> PacketKind { PacketKind::OAck }
+	#[inline] fn as_bytes(&self) -> &[u8] { self.inner() }
+}
+impl<'a> TryFrom<&'a [u8]> for TftpOAck<'a> {
+	type Error = PacketError;
 
-	fn as_bytes(&self) -> &[u8] {
-		self.inner()
+	fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+		TftpOAck::check_from_slice(buf)?;
+		Ok(Self::from_borrowed(buf))
 	}
 }
+impl TryFrom<Vec<u8>> for TftpOAck<'_> {
+	type Error = PacketError;
+
+	fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
+		TftpOAck::check_from_slice(&vec[..])?;
+		Ok(Self::from_owned(vec))
+	}
+}
+
+// ############################################################################
+// #### TFTP ERROR ############################################################
+// ############################################################################
 
 pub struct TftpError<'a> { 
 	buf: &'a [u8],
@@ -359,9 +430,9 @@ impl<'a> TftpPacket<'a> {
 		Ok(
 			match u16::from_be_bytes([ buf[0], buf[1] ]) {
 				consts::OPCODE_RRQ | consts::OPCODE_WRQ => Self::Req(TftpReq::try_from(buf)?),
-				consts::OPCODE_ACK => Self::Ack(TftpAck::try_from_buf(buf)?),
-				consts::OPCODE_OACK => Self::OAck(TftpOAck::try_from_buf(buf)?),
-				consts::OPCODE_DATA => Self::Data(TftpData::try_from_buf(buf)?),
+				consts::OPCODE_ACK => Self::Ack(TftpAck::try_from(buf)?),
+				consts::OPCODE_OACK => Self::OAck(TftpOAck::try_from(buf)?),
+				consts::OPCODE_DATA => Self::Data(TftpData::try_from(buf)?),
 				_ => return Err(PacketError::InvalidOpcode),
 			}
 		)
@@ -369,7 +440,9 @@ impl<'a> TftpPacket<'a> {
 }
 
 // ############################################################################
+// ############################################################################
 // #### MUTABLE PACKETS #######################################################
+// ############################################################################
 // ############################################################################
 
 pub enum MutablePacketBuf<'a> {
