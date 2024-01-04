@@ -11,7 +11,7 @@ pub mod consts {
 	pub const TFTP_LISTEN_PORT: u16 = 69;
 	pub const DEFAULT_BLOCK_SIZE: u16 = 512;
 	pub const DEFAULT_TIMEOUT_SECS: u8 = 5;
-	pub const DEFAULT_RETRANSMIT_TRIES: u8 = 3;
+	pub const DEFAULT_RETRANSMIT_ATTEMPTS: u8 = 5;
 
 	pub const TFTP_XFER_MODE_OCTET: &str = "octet";
 	pub const TFTP_XFER_MODE_NETASCII: &str = "netascii";
@@ -100,10 +100,7 @@ impl Mode {
 }
 impl Display for Mode {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{}", match self {
-			Self::Octet => consts::TFTP_XFER_MODE_OCTET,
-			Self::NetAscii => consts::TFTP_XFER_MODE_NETASCII,
-		})
+		write!(f, "{}", self.as_str())
 	}
 }
 
@@ -132,10 +129,8 @@ impl Display for ReceiveError {
 pub struct TftpConnection {
 	tx_mode: Mode,
 	socket: UdpSocket,
-	retry_attempts: u8,
 
 	options: TftpOptions,
-
 	cxl_tok: CancellationToken,
 }
 
@@ -148,7 +143,6 @@ impl TftpConnection {
 		let mut conn = Self {
 			socket,
 			options: TftpOptions::default(),
-			retry_attempts: 5,
 			cxl_tok,
 			tx_mode: Mode::Octet
 		};
@@ -257,7 +251,7 @@ impl TftpConnection {
 					return Ok(())
 				},
 				Err(e) => {
-					if attempts > self.retry_attempts {
+					if attempts > consts::DEFAULT_RETRANSMIT_ATTEMPTS {
 						return Err(e);
 					}
 					attempts += 1;
@@ -333,7 +327,6 @@ pub async fn receive_file<'a>(conn: TftpConnection, file: File, init_data: Optio
 		
 		let ack_pkt = packet::MutableTftpAck::new(blocknum);
 		let _ = conn.send_packet(&ack_pkt);
-
 		if first.data_len() < (blocksize as usize) {
 			return;
 		}
@@ -365,7 +358,6 @@ pub async fn receive_file<'a>(conn: TftpConnection, file: File, init_data: Optio
 		
 		let ack_pkt = packet::MutableTftpAck::new(blocknum);
 		let _ = conn.send_packet(&ack_pkt);
-
 		if pkt.data_len() < (blocksize as usize) {
 			break;
 		}
