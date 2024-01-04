@@ -57,7 +57,7 @@ impl TftpClient {
 			.kind(RequestKind::Rrq)
 			.mode(Mode::Octet)
 			.filename(&filename);
-		
+
 		if options.len() > 0 {
 			builder = builder.options(options);
 		}
@@ -95,7 +95,7 @@ impl TftpClient {
 				tftp::receive_file(conn, file, Some(data)).await
 			},
 			Ok((pkt, _)) => error!("Received packet of unexpected kind {}", pkt.packet_kind()),
-			Err(e) => error!("Server didn't properly properly responded to request ({})", e),
+			Err(e) => error!("Server didn't properly respond to request ({})", e),
 		};
 	}
 
@@ -103,10 +103,9 @@ impl TftpClient {
 		let filename = file_path.file_name().unwrap().to_string_lossy();
 		let file = match OpenOptions::new().read(true).open(&file_path) {
 			Ok(f) => f,
-			Err(e) => return error!("Could not open file for GET request: {}", e),
+			Err(e) => return error!("Could not open file for PUT request: {}", e),
 		};
 
-		let mut opt_req: bool = false;
 		let mut builder = TftpReqBuilder::new()
 			.kind(RequestKind::Wrq)
 			.mode(Mode::Octet)
@@ -115,11 +114,9 @@ impl TftpClient {
 		let mut options = options.to_owned();
 		if options.len() > 0 {
 			if let Some(i) = options.iter().position(|e| e.kind() == TftpOptionKind::TransferSize) {
-				/* TODO: set proper transfer size of file */
-				options[i] = TftpOption::TransferSize(1);
+				options[i] = TftpOption::TransferSize(file.metadata().unwrap().len() as u32);
 			}
 			builder = builder.options(&options[..]);
-			opt_req = true;
 		}
 		let pkt = builder.build();
 		conn.send_request_to(&pkt, server);
@@ -146,7 +143,7 @@ impl TftpClient {
 				tftp::send_file(conn, file).await
 			},
 			Ok((pkt, _)) => error!("Received packet of unexpected kind {}", pkt.packet_kind()),
-			Err(e) => error!("Server didn't properly responded to request ({})", e),
+			Err(e) => error!("Server didn't properly respond to request ({})", e),
 		}
 	}
 }

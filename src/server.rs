@@ -88,7 +88,7 @@ impl TftpServer {
 			Ok(con) => con,
 			Err(e) => return error!("failed to handle request due to lower layer error: {}", e),
 		};
-		conn.connect_to(client).unwrap();
+		conn.connect_to(client);
 
 		match req.mode() {
 			Ok(mode) if mode == Mode::Octet => (),

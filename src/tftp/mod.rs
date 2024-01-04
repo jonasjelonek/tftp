@@ -247,7 +247,7 @@ impl TftpConnection {
 				return Err(ReceiveError::Timeout);
 			}
 
-			self.send_packet(data_pkt);
+			self.send_packet(data_pkt).map_err(|e| ReceiveError::LowerLayer(e))?;
 			match self.receive_packet(&mut buf, Some(packet::PacketKind::Ack)) {
 				Ok(reply) => {
 					let packet::TftpPacket::Ack(ack) = reply else { panic!() };
