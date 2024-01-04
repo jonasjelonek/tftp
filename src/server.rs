@@ -162,7 +162,7 @@ pub async fn run_server(listen_addr: SocketAddr, cxl_token: CancellationToken) -
 
 				let task_cxl_token = cxl_token.clone();
 				tokio::spawn(async move {
-					let Ok(packet) = pkt::TftpReq::try_from_buf(&recv_buf[..size]) else {
+					let Ok(packet) = pkt::TftpReq::try_from(&recv_buf[..size]) else {
 						return error!("only TFTP requests accepted on this socket (client: {})", client);
 					};
 					TftpServer

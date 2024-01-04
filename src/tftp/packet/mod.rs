@@ -72,30 +72,46 @@ impl<'a> PacketBuf<'a> {
 }
 
 pub struct TftpReq<'a> {
-	buf: PacketBuf<'a>,
+	inner: PacketBuf<'a>,
 }
 impl<'a> TftpReq<'a> {
-	pub fn from_buf(buf: &'a [u8]) -> Self {
-		TftpReq { buf: PacketBuf::Borrowed(buf) }
+
+	/// Creates a TftpReq instance with the given borrowed slice.
+	/// 
+	/// **Only use this when you made sure the content is valid for a
+	/// TftpReq!!**
+	#[inline] pub fn from_borrowed(buf: &'a [u8]) -> Self {
+		TftpReq { inner: PacketBuf::Borrowed(buf) }
 	}
+
+	/// Creates a TftpReq instance with the given owned buffer, consuming
+	/// it.
+	/// 
+	/// **Only use this when you made sure the content is valid for a
+	/// TftpReq!!**
+	#[inline] pub fn from_owned(buf: Vec<u8>) -> Self {
+		TftpReq { inner: PacketBuf::Owned(buf) }
+	}
+
 	fn inner(&self) -> &[u8] {
-		match self.buf {
+		match self.inner {
 			PacketBuf::Borrowed(ref b) => *b,
 			PacketBuf::Owned(ref v) => &v[..],
 		}
 	}
 
-	pub fn try_from_buf(buf: &'a [u8]) -> Result<Self, PacketError> {
+	/// Checks if the given slice contains valid TftpReq content.
+	/// 
+	/// *This is used by the TryFrom<> trait implementations.*
+	fn check_from_slice(buf: &'a [u8]) -> Result<(), PacketError> {
 		if buf.len() < 6 {
-			return Err(PacketError::UnexpectedEof);
+			Err(PacketError::UnexpectedEof)
 		} else {
 			match u16::from_be_bytes([ buf[0], buf[1] ]) {
-				consts::OPCODE_RRQ | consts::OPCODE_WRQ => (),
-				_ => return Err(PacketError::UnexpectedOpcode),
+				consts::OPCODE_RRQ | consts::OPCODE_WRQ => Ok(()),
+				_ => Err(PacketError::UnexpectedOpcode),
 			}
 		}
-
-		Ok(Self::from_buf(buf))
 	}
 
 	pub fn kind(&self) -> RequestKind {
@@ -163,6 +179,22 @@ impl<'a> Packet for TftpReq<'a> {
 	fn packet_kind(&self) -> PacketKind { PacketKind::Req(self.kind()) }
 	fn as_bytes(&self) -> &[u8] { self.inner() }
 }
+impl<'a> TryFrom<&'a [u8]> for TftpReq<'a> {
+	type Error = PacketError;
+
+	fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+		TftpReq::check_from_slice(buf)?;
+		Ok(Self::from_borrowed(buf))
+	}
+}
+impl TryFrom<Vec<u8>> for TftpReq <'_> {
+	type Error = PacketError;
+
+	fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
+		TftpReq::check_from_slice(&vec[..])?;
+		Ok(Self::from_owned(vec))
+	}
+}
 
 pub struct TftpData<'a> { buf: &'a [u8] }
 impl <'a> TftpData<'a> {
@@ -204,7 +236,6 @@ impl<'a> TftpAck<'a> {
 	pub fn from_borrowed_unchecked(buf: &'a [u8]) -> Self {
 		Self { buf: PacketBuf::Borrowed(buf) }
 	}
-
 	pub fn from_vec_unchecked(vec: Vec<u8>) -> Self {
 		Self { buf: PacketBuf::Owned(vec) }
 	}
@@ -327,7 +358,7 @@ impl<'a> TftpPacket<'a> {
 	pub fn try_from_buf(buf: &'a [u8]) -> Result<Self, PacketError> {
 		Ok(
 			match u16::from_be_bytes([ buf[0], buf[1] ]) {
-				consts::OPCODE_RRQ | consts::OPCODE_WRQ => Self::Req(TftpReq::try_from_buf(buf)?),
+				consts::OPCODE_RRQ | consts::OPCODE_WRQ => Self::Req(TftpReq::try_from(buf)?),
 				consts::OPCODE_ACK => Self::Ack(TftpAck::try_from_buf(buf)?),
 				consts::OPCODE_OACK => Self::OAck(TftpOAck::try_from_buf(buf)?),
 				consts::OPCODE_DATA => Self::Data(TftpData::try_from_buf(buf)?),

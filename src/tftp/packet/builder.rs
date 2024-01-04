@@ -80,12 +80,12 @@ impl<'a, 'b> TftpReqBuilder<'a, 'b> {
 		match buf {
 			Some(buf) => {
 				self.write_to_buf(buf);
-				TftpReq { buf: PacketBuf::Borrowed(buf) }
+				TftpReq::from_borrowed(buf)
 			},
 			None => {
 				let mut buf = vec![0; 64];
 				self.write_to_buf(&mut buf[..]);
-				TftpReq { buf: PacketBuf::Owned(buf) }
+				TftpReq::from_owned(buf)
 			}
 		}
 	}
