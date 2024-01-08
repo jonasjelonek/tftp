@@ -163,7 +163,7 @@ impl<'a> TftpReq<'a> {
 		let mut iter = buf[2..].split(|e| *e == 0x00);
 
 		/* skip first two which should be filename + mode */
-		iter.advance_by(2).unwrap();
+		let _ = iter.nth(1); /* could be replaced by advance_by(2) when stabilized to be more intuitive */
 		while let Some(elem) = iter.next() {
 			if elem.len() < 2 {
 				break;
