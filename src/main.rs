@@ -1,5 +1,4 @@
 #![feature(let_chains)]
-#![feature(once_cell_try)]
 
 pub mod cli;
 pub mod tftp;
@@ -47,8 +46,9 @@ async fn main() {
 			_ => return error!("Cannot find/access specified root path!")
 		}
 	} else {
-		if let Err(e) = WORKING_DIR.get_or_try_init(std::env::current_dir) {
-			return error!("Cannot access current working dir: {}!", e);
+		match std::env::current_dir() {
+			Ok(wd) => WORKING_DIR.set(wd).unwrap(),
+			Err(e) => return error!("Cannot access current working dir: {}!", e),
 		}
 	}
 
