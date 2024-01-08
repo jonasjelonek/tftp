@@ -11,6 +11,10 @@ I tried to allocate as less as possible, keep the code small and comprehensive w
 
 If you think there is room for improvement, please open an issue or a pull request.
 
+## Disclaimer
+
+**This currently needs Rust nightly compiler since I implemented some things with the help of currently non-stabilized features.**
+
 ## Supported TFTP features
 
 - [x] Server mode
@@ -36,7 +40,6 @@ It supports parallel operation with a arbitrary number of peers.
 
 ## Big TODOs
 
-- ~~WRQ/PUT support - allow the client to store a file on the server~~ - DONE
-- ~~Window size option support~~ - NOT PLANNED ATM
+- remove need for nightly toolchain
 - get rid of all the `unwrap`s - they are bad style but good during development
 - improve general output, especially for debugging
