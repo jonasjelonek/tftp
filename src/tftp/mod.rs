@@ -36,9 +36,10 @@ pub mod options;
 pub mod utils;
 
 use crate::tftp;
+use crate::tftp::packet::builder::TftpErrorBuilder;
 use options::*;
 
-use self::packet::Packet;
+use self::packet::{Packet, PacketError};
 
 // ############################################################################
 // ############################################################################
@@ -75,6 +76,24 @@ pub enum ErrorCode {
 impl Display for ErrorCode {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		write!(f, "{}", *self as u16)
+	}
+}
+impl TryFrom<u16> for ErrorCode {
+	type Error = PacketError;
+
+	fn try_from(value: u16) -> Result<Self, Self::Error> {
+		match value {
+			0 => Ok(Self::NotDefined),
+			1 => Ok(Self::FileNotFound),
+			2 => Ok(Self::AccessViolation),
+			3 => Ok(Self::StorageError),
+			4 => Ok(Self::IllegalOperation),
+			5 => Ok(Self::UnknownTid),
+			6 => Ok(Self::FileExists),
+			7 => Ok(Self::NoSuchUser),
+			8 => Ok(Self::InvalidOption),
+			_ => Err(PacketError::MalformedPacket)
+		}
 	}
 }
 
@@ -293,11 +312,11 @@ impl TftpConnection {
 
 	pub fn send_error(&self, code: ErrorCode, msg: &str) {
 		let mut buf: [u8; 64] = [0; 64];
-		let err_pkt = packet::MutableTftpError::with(
-			&mut buf,
-			code,
-			msg
-		).unwrap();
+		let err_pkt = TftpErrorBuilder::new()
+			.with_buf(&mut buf[..])
+			.error_code(code)
+			.error_msg(msg)
+			.build();
 
 		let _ = self.socket.send(err_pkt.as_bytes());
 		error!("Tftp error: code {}; '{}'", code, msg);

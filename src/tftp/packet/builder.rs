@@ -1,6 +1,8 @@
 use std::io::Write;
 
-use super::{Mode, RequestKind, TftpReq, PacketBuf, TftpOAck};
+use crate::tftp::{ErrorCode, utils};
+
+use super::{Mode, RequestKind, TftpReq, PacketBuf, TftpOAck, TftpError};
 use super::super::options::TftpOption;
 use super::super::consts;
 
@@ -139,6 +141,63 @@ impl<'a> TftpOAckBuilder<'a> {
 				let mut buf = vec![0; 64];
 				self.write_to_buf(&mut buf[..]);
 				TftpOAck::from_owned(buf)
+			}
+		}
+	}
+}
+
+pub struct TftpErrorBuilder<'a> {
+	buf: Option<&'a mut [u8]>,
+	code: ErrorCode,
+	msg: Option<&'a str>,
+}
+impl<'a> TftpErrorBuilder<'a> {
+	pub fn new() -> Self {
+		Self {
+			buf: None, code: ErrorCode::NotDefined,
+			msg: None
+		}
+	}
+
+	#[inline] pub fn with_buf(mut self, buf: &'a mut [u8]) -> Self {
+		self.buf = Some(buf);
+		self
+	}
+	#[inline] pub fn error_code(mut self, code: ErrorCode) -> Self {
+		self.code = code;
+		self
+	}
+	#[inline] pub fn error_msg(mut self, msg: &'a str) -> Self {
+		self.msg = Some(msg);
+		self
+	}
+
+	fn write_to_buf(&mut self, buf: &mut [u8]) {
+		buf[0..=1].copy_from_slice(consts::OPCODE_ERROR.to_be_bytes().as_slice());
+		buf[2..=3].copy_from_slice((self.code as u16).to_be_bytes().as_slice());
+		
+		let mut len: usize = 4;
+		if let Some(msg) = self.msg {
+			len += utils::copy(msg.as_bytes(), &mut buf[4..]);
+		}
+		
+		if len == buf.len() {
+			len -= 1;
+		}
+		buf[len] = 0;
+	}
+
+	pub fn build(mut self) -> TftpError<'a> {
+		let buf = self.buf.take();
+		match buf {
+			Some(buf) => {
+				self.write_to_buf(buf);
+				TftpError::from_borrowed(buf)
+			},
+			None => {
+				let mut buf = vec![0; 64];
+				self.write_to_buf(&mut buf[..]);
+				TftpError::from_owned(buf)
 			}
 		}
 	}

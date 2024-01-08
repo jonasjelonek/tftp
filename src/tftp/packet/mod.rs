@@ -3,6 +3,8 @@ use std::ffi::CStr;
 
 use crate::tftp::{consts, RequestKind, Mode};
 
+use super::ErrorCode;
+
 pub mod builder;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
@@ -269,18 +271,18 @@ impl TryFrom<Vec<u8>> for TftpData<'_> {
 // ############################################################################
 
 pub struct TftpAck<'a> {
-	buf: PacketBuf<'a>
+	inner: PacketBuf<'a>
 }
 impl<'a> TftpAck<'a> {
 	#[inline] pub fn from_borrowed(buf: &'a [u8]) -> Self {
-		Self { buf: PacketBuf::Borrowed(buf) }
+		Self { inner: PacketBuf::Borrowed(buf) }
 	}
 	#[inline] pub fn from_owned(vec: Vec<u8>) -> Self {
-		Self { buf: PacketBuf::Owned(vec) }
+		Self { inner: PacketBuf::Owned(vec) }
 	}
 	
 	fn inner(&self) -> &[u8] {
-		match self.buf {
+		match self.inner {
 			PacketBuf::Borrowed(ref b) => *b,
 			PacketBuf::Owned(ref v) => &v[..],
 		}
@@ -405,7 +407,61 @@ impl TryFrom<Vec<u8>> for TftpOAck<'_> {
 // ############################################################################
 
 pub struct TftpError<'a> { 
-	buf: &'a [u8],
+	inner: PacketBuf<'a>,
+}
+impl<'a> TftpError<'a> {
+	#[inline] pub fn from_borrowed(buf: &'a [u8]) -> Self {
+		Self { inner: PacketBuf::Borrowed(buf) }
+	}
+	#[inline] pub fn from_owned(vec: Vec<u8>) -> Self {
+		Self { inner: PacketBuf::Owned(vec) }
+	}
+
+	fn inner(&self) -> &[u8] {
+		match self.inner {
+			PacketBuf::Borrowed(ref b) => *b,
+			PacketBuf::Owned(ref v) => &v[..],
+		}
+	}
+
+	fn check_from_slice(buf: &'a [u8]) -> Result<(), PacketError> {
+		if buf.len() < 6 {
+			return Err(PacketError::UnexpectedEof);
+		}
+		if u16::from_be_bytes([ buf[0], buf[1] ]) != consts::OPCODE_OACK {
+			return Err(PacketError::UnexpectedOpcode);
+		}
+		Ok(())
+	}
+
+	pub fn error_code(&self) -> ErrorCode {
+		let buf = self.inner();
+		ErrorCode::try_from(u16::from_be_bytes([ buf[2], buf[3] ])).unwrap()
+	}
+
+	pub fn error_msg(&'a self) -> &'a str {
+		std::str::from_utf8(&self.inner()[4..]).unwrap()
+	}
+}
+impl<'a> Packet for TftpError<'a> {
+	#[inline] fn packet_kind(&self) -> PacketKind { PacketKind::Error }
+	#[inline] fn as_bytes(&self) -> &[u8] { self.inner() }
+}
+impl<'a> TryFrom<&'a [u8]> for TftpError<'a> {
+	type Error = PacketError;
+
+	fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+		TftpError::check_from_slice(buf)?;
+		Ok(Self::from_borrowed(buf))
+	}
+}
+impl TryFrom<Vec<u8>> for TftpError<'_> {
+	type Error = PacketError;
+
+	fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
+		TftpError::check_from_slice(&vec[..])?;
+		Ok(Self::from_owned(vec))
+	}
 }
 
 pub enum TftpPacket<'a> {
