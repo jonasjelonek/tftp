@@ -1,13 +1,14 @@
 # tftp
 
-A decent and cross-compatible tftp server + client written in Rust, trying to be fast and low-footprint.
+A cross-platform tftp server + client written in Rust, trying to be fast and low-footprint.
 
-## Really fast and low-footprint??
+## Fast and low-footprint
 
-Many projects on GitHub claim that they are fast, reliable and low-footprint implementations of protocols, etc. So I try to do that too. ;)   
-   
-Currently, I cannot ensure it is fast and has an extremely low footprint. But I designed it like this with my current knowledge of Rust. This project is intended to extend my Rust knowledge, improve my coding and become familiar with TFTP, a quite important protocol when working with embedded devices.   
-I tried to allocate as less as possible, keep the code small and comprehensive while having a good structure, abstraction and making use of Rust's features.   
+I haven't run any benchmark or similar things to really prove my Tftp app is fast and has an extremely low footprint. But I've put serious thoughts into this and try to achieve that goal by several measures. 
+For example, the structs abstracting the Tftp packet types are mostly used zero-copy, i.e. the buffer that is used for reading from socket/file is then directly used by the packet types without any copying/allocation.
+In general, allocating is kept to a minimum.
+
+Of course, this all is limited by my current knowledge of Rust. This project is intended to extend my Rust knowledge, improve my coding and become familiar with TFTP, a quite important protocol when working with embedded devices.   
 
 If you think there is room for improvement, please open an issue or a pull request.
 
