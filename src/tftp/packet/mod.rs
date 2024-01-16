@@ -5,7 +5,8 @@ use crate::tftp::{
 	consts,
 	RequestKind,
 	Mode,
-	ErrorCode
+	error::ErrorCode,
+	error::PacketError,
 };
 
 pub mod builder;
@@ -33,30 +34,6 @@ impl Display for PacketKind {
 pub trait Packet {
 	fn packet_kind(&self) -> PacketKind;
 	fn as_bytes(&self) -> &[u8];
-}
-
-#[derive(Debug)]
-pub enum PacketError {
-	UnexpectedEof,
-	MalformedPacket,
-	UnexpectedOpcode,
-	InvalidOpcode,
-	NotNullTerminated,
-	InvalidCharacters,
-	UnknownTxMode,
-}
-impl Display for PacketError {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			Self::InvalidCharacters => write!(f, "Invalid characters"),
-			Self::InvalidOpcode => write!(f, "Invalid opcode"),
-			Self::UnexpectedOpcode => write!(f, "Unexpected opcode"),
-			Self::MalformedPacket => write!(f, "Malformed packet"),
-			Self::NotNullTerminated => write!(f, "Missing null termination"),
-			Self::UnexpectedEof => write!(f, "Unexpected EOF"),
-			Self::UnknownTxMode => write!(f, "Unknown transfer mode"),
-		}
-	}
 }
 
 // ############################################################################

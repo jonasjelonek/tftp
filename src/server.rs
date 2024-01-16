@@ -14,6 +14,7 @@ use crate::tftp::{
 	/* submodules */
 	options::{*, self},
 	packet as pkt,
+	error::ErrorCode,
 
 	Mode, RequestKind, TftpConnection
 };
@@ -93,16 +94,16 @@ impl TftpServer {
 		match req.mode() {
 			Ok(mode) if mode == Mode::Octet => (),
 			Ok(mode) if mode == Mode::NetAscii => {
-				return conn.drop_with_err(tftp::ErrorCode::NotDefined, "NetAscii mode not supported")
+				return conn.drop_with_err(ErrorCode::NotDefined, "NetAscii mode not supported")
 			},
 			Ok(_) | Err(_) => {
-				return conn.drop_with_err(tftp::ErrorCode::NotDefined, "Malformed request; invalid mode")
+				return conn.drop_with_err(ErrorCode::NotDefined, "Malformed request; invalid mode")
 			},
 		}
 	
 		let mut path = crate::working_dir().clone();
 		let Ok(filename) = req.filename() else {
-			return conn.drop_with_err(tftp::ErrorCode::NotDefined, "Malformed request; missing filename");
+			return conn.drop_with_err(ErrorCode::NotDefined, "Malformed request; missing filename");
 		};
 		path.push(filename);
 
@@ -114,9 +115,9 @@ impl TftpServer {
 
 		let file = match file_opts.open(&path) {
 			Ok(f) => f,
-			Err(e) if e.kind() == io::ErrorKind::NotFound => return conn.drop_with_err(tftp::ErrorCode::FileNotFound, ""),
-			Err(e) if e.kind() == io::ErrorKind::PermissionDenied => return conn.drop_with_err(tftp::ErrorCode::AccessViolation, ""),
-			Err(e) => return conn.drop_with_err(tftp::ErrorCode::StorageError, e.to_string().as_str()),
+			Err(e) if e.kind() == io::ErrorKind::NotFound => return conn.drop_with_err(ErrorCode::FileNotFound, ""),
+			Err(e) if e.kind() == io::ErrorKind::PermissionDenied => return conn.drop_with_err(ErrorCode::AccessViolation, ""),
+			Err(e) => return conn.drop_with_err(ErrorCode::StorageError, e.to_string().as_str()),
 		};
 		let file_len = match req.kind() {
 			RequestKind::Wrq => 0,

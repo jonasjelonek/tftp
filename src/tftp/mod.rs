@@ -1,4 +1,5 @@
 use std::net::{UdpSocket, SocketAddr, IpAddr};
+use std::str::FromStr;
 use std::{fmt::Display, time::Duration};
 use std::io::{self, Read, Write, BufReader, BufWriter};
 use std::fs::File;
@@ -6,6 +7,7 @@ use std::fs::File;
 pub mod packet;
 pub mod options;
 pub mod utils;
+pub mod error;
 
 #[allow(unused)]
 use log::{info, warn, error, debug, trace};
@@ -38,7 +40,7 @@ pub mod consts {
 use crate::tftp::{
 	packet::builder::TftpErrorBuilder,
 	packet::Packet,
-	packet::PacketError,
+	error::ErrorCode,
 };
 use options::*;
 
@@ -58,43 +60,6 @@ impl Display for RequestKind {
 		match self {
 			Self::Rrq => write!(f, "RRQ"),
 			Self::Wrq => write!(f, "WRQ"),
-		}
-	}
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[repr(u16)]
-pub enum ErrorCode {
-	NotDefined = 0,
-	FileNotFound = 1,
-	AccessViolation = 2,
-	StorageError = 3,
-	IllegalOperation = 4,
-	UnknownTid = 5,
-	FileExists = 6,
-	NoSuchUser = 7,
-	InvalidOption = 8,
-}
-impl Display for ErrorCode {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "{}", *self as u16)
-	}
-}
-impl TryFrom<u16> for ErrorCode {
-	type Error = PacketError;
-
-	fn try_from(value: u16) -> Result<Self, Self::Error> {
-		match value {
-			0 => Ok(Self::NotDefined),
-			1 => Ok(Self::FileNotFound),
-			2 => Ok(Self::AccessViolation),
-			3 => Ok(Self::StorageError),
-			4 => Ok(Self::IllegalOperation),
-			5 => Ok(Self::UnknownTid),
-			6 => Ok(Self::FileExists),
-			7 => Ok(Self::NoSuchUser),
-			8 => Ok(Self::InvalidOption),
-			_ => Err(PacketError::MalformedPacket)
 		}
 	}
 }
@@ -124,6 +89,17 @@ impl Display for Mode {
 		write!(f, "{}", self.as_str())
 	}
 }
+impl FromStr for Mode {
+	type Err = error::ParseModeError;
+
+	fn from_str(s: &str) -> Result<Self, Self::Err> {
+		match &(s.to_ascii_lowercase())[..] {
+			consts::TFTP_XFER_MODE_NETASCII => Ok(Self::NetAscii),
+			consts::TFTP_XFER_MODE_OCTET => Ok(Self::Octet),
+			_ => Err(error::ParseModeError)
+		}
+	}
+}
 
 #[derive(Debug)]
 pub enum ReceiveError {
@@ -131,7 +107,7 @@ pub enum ReceiveError {
 	UnexpectedBlockAck,
 	Timeout,
 	UnknownTid,
-	InvalidPacket(packet::PacketError),
+	InvalidPacket(error::PacketError),
 	LowerLayer(io::Error),
 }
 impl Display for ReceiveError {
