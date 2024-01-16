@@ -41,6 +41,7 @@ use crate::tftp::{
 	packet::builder::TftpErrorBuilder,
 	packet::Packet,
 	error::ErrorCode,
+	error::ReceiveError,
 };
 use options::*;
 
@@ -90,28 +91,6 @@ impl FromStr for Mode {
 			consts::TFTP_XFER_MODE_NETASCII => Ok(Self::NetAscii),
 			consts::TFTP_XFER_MODE_OCTET => Ok(Self::Octet),
 			_ => Err(error::ParseModeError)
-		}
-	}
-}
-
-#[derive(Debug)]
-pub enum ReceiveError {
-	UnexpectedPacketKind,
-	UnexpectedBlockAck,
-	Timeout,
-	UnknownTid,
-	InvalidPacket(error::PacketError),
-	LowerLayer(io::Error),
-}
-impl Display for ReceiveError {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			Self::UnknownTid => write!(f, "Unknown or unexpected TID"),
-			Self::Timeout => write!(f, "Timeout"),
-			Self::UnexpectedPacketKind => write!(f, "Unexpected kind of packet"),
-			Self::UnexpectedBlockAck => write!(f, "ACK for unexpected block number"),
-			Self::InvalidPacket(e) => write!(f, "Invalid packet ({})", e),
-			Self::LowerLayer(e) => write!(f, "LowerLayer error: {}", e),
 		}
 	}
 }

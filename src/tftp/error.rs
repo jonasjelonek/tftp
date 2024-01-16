@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PacketError {
 	UnexpectedEof,
 	MalformedPacket,
@@ -64,6 +64,28 @@ impl TryFrom<u16> for ErrorCode {
 pub struct ParseModeError;
 impl Display for ParseModeError {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "")
+		write!(f, "Invalid mode identifier")
+	}
+}
+
+#[derive(Debug)]
+pub enum ReceiveError {
+	UnexpectedPacketKind,
+	UnexpectedBlockAck,
+	Timeout,
+	UnknownTid,
+	InvalidPacket(PacketError),
+	LowerLayer(std::io::Error),
+}
+impl Display for ReceiveError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		match self {
+			Self::UnknownTid => write!(f, "Unknown or unexpected TID"),
+			Self::Timeout => write!(f, "Timeout"),
+			Self::UnexpectedPacketKind => write!(f, "Unexpected kind of packet"),
+			Self::UnexpectedBlockAck => write!(f, "ACK for unexpected block number"),
+			Self::InvalidPacket(e) => write!(f, "Invalid packet ({})", e),
+			Self::LowerLayer(e) => write!(f, "LowerLayer error: {}", e),
+		}
 	}
 }
