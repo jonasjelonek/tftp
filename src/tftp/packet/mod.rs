@@ -1,13 +1,16 @@
 use std::{collections::HashMap, fmt::Display};
 use std::ffi::CStr;
 
-use crate::tftp::{consts, RequestKind, Mode};
-
-use super::ErrorCode;
+use crate::tftp::{
+	consts,
+	RequestKind,
+	Mode,
+	ErrorCode
+};
 
 pub mod builder;
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PacketKind {
 	Req(RequestKind),
 	Data,
@@ -723,7 +726,7 @@ impl<'a> MutableTftpError<'a> {
 		Ok(Self { buf, data_len: len })
 	}
 
-	pub fn set_error_code(&mut self, code: super::tftp::ErrorCode) {
+	pub fn set_error_code(&mut self, code: ErrorCode) {
 		self.buf[2] = 0;
 		self.buf[3] = code as u8;
 	}

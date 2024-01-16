@@ -1,10 +1,17 @@
 use std::io::Write;
 
-use crate::tftp::{ErrorCode, utils};
+use crate::tftp::{
+	consts,
+	utils,
 
-use super::{Mode, RequestKind, TftpReq, PacketBuf, TftpOAck, TftpError};
-use super::super::options::TftpOption;
-use super::super::consts;
+	packet::TftpReq,
+	packet::TftpOAck,
+	packet::TftpError,
+
+	options::TftpOption,
+
+	Mode, RequestKind, ErrorCode,
+};
 
 
 pub struct TftpReqBuilder<'a, 'b> {
@@ -33,7 +40,6 @@ impl<'a, 'b> TftpReqBuilder<'a, 'b> {
 	/// **Make sure that the buffer is big enough for the expected content!
 	/// Building will silently fail when the buffer is too small, maybe resulting
 	/// in a corrupted packet.**
-	/// 
 	#[inline] pub fn with_buf(mut self, buf: &'a mut [u8]) -> Self {
 		self.buf = Some(buf);
 		self
@@ -105,6 +111,13 @@ impl<'a> TftpOAckBuilder<'a> {
 		}
 	}
 
+	/// Assigns a buffer to this builder. This way the builder can be used with
+	/// a stack-allocated buffer instead of a heap-allocated Vec<>, which is
+	/// used by default.
+	/// 
+	/// **Make sure that the buffer is big enough for the expected content!
+	/// Building will silently fail when the buffer is too small, maybe resulting
+	/// in a corrupted packet.**
 	#[inline] pub fn with_buf(mut self, buf: &'a mut [u8]) -> Self {
 		self.buf = Some(buf);
 		self
@@ -159,6 +172,13 @@ impl<'a> TftpErrorBuilder<'a> {
 		}
 	}
 
+	/// Assigns a buffer to this builder. This way the builder can be used with
+	/// a stack-allocated buffer instead of a heap-allocated Vec<>, which is
+	/// used by default.
+	/// 
+	/// **Make sure that the buffer is big enough for the expected content!
+	/// Building will silently fail when the buffer is too small, maybe resulting
+	/// in a corrupted packet.**
 	#[inline] pub fn with_buf(mut self, buf: &'a mut [u8]) -> Self {
 		self.buf = Some(buf);
 		self

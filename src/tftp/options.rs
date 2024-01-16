@@ -1,9 +1,9 @@
 use std::time::Duration;
 use std::collections::HashMap;
 
-use super::consts as consts;
+use crate::tftp::consts;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OptionError {
 	InvalidOption,
 	UnsupportedOption,
@@ -11,7 +11,7 @@ pub enum OptionError {
 	NoAck,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TftpOptionKind {
 	Blocksize,
 	Timeout,

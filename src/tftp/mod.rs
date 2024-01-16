@@ -3,6 +3,10 @@ use std::{fmt::Display, time::Duration};
 use std::io::{self, Read, Write, BufReader, BufWriter};
 use std::fs::File;
 
+pub mod packet;
+pub mod options;
+pub mod utils;
+
 #[allow(unused)]
 use log::{info, warn, error, debug, trace};
 use tokio_util::sync::CancellationToken;
@@ -31,21 +35,19 @@ pub mod consts {
 	pub const EMPTY_CHUNK: &[u8] = &[];
 }
 
-pub mod packet;
-pub mod options;
-pub mod utils;
-
-use crate::tftp;
-use crate::tftp::packet::builder::TftpErrorBuilder;
+use crate::tftp::{
+	packet::builder::TftpErrorBuilder,
+	packet::Packet,
+	packet::PacketError,
+};
 use options::*;
 
-use self::packet::{Packet, PacketError};
 
 // ############################################################################
 // ############################################################################
 // ############################################################################
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(u16)]
 pub enum RequestKind {
 	Rrq = 1,
@@ -60,7 +62,7 @@ impl Display for RequestKind {
 	}
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(u16)]
 pub enum ErrorCode {
 	NotDefined = 0,
@@ -97,7 +99,7 @@ impl TryFrom<u16> for ErrorCode {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
 pub enum Mode {
 	NetAscii,
 	Octet,
@@ -395,7 +397,7 @@ pub async fn send_file(conn: TftpConnection, file: File) {
 	let blocksize = conn.opt_blocksize();
 
 	if conn.tx_mode() == Mode::NetAscii {
-		return conn.drop_with_err(tftp::ErrorCode::IllegalOperation, "NetAscii mode not supported");
+		return conn.drop_with_err(ErrorCode::IllegalOperation, "NetAscii mode not supported");
 	}
 
 	let mut file_read = BufReader::new(file);
