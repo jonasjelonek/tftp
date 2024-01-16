@@ -64,19 +64,12 @@ impl Display for RequestKind {
 	}
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Mode {
 	NetAscii,
 	Octet,
 }
 impl Mode {
-	pub fn try_from(input: &str) -> Option<Self> {
-		match &(input.to_ascii_lowercase())[..] {
-			consts::TFTP_XFER_MODE_NETASCII => Some(Self::NetAscii),
-			consts::TFTP_XFER_MODE_OCTET => Some(Self::Octet),
-			_ => None
-		}
-	}
 	pub fn as_str(&self) -> &'static str {
 		match self {
 			Self::Octet => consts::TFTP_XFER_MODE_OCTET,

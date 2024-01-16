@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::{collections::HashMap, fmt::Display};
 use std::ffi::CStr;
 
@@ -129,12 +130,12 @@ impl<'a> TftpReq<'a> {
 			}
 		}
 
-		Mode::try_from(
+		Mode::from_str(
 			CStr::from_bytes_until_nul(&buf[mode_pos..])
 				.map_err(|_| PacketError::NotNullTerminated)?
 				.to_str()
 				.map_err(|_| PacketError::InvalidCharacters)?
-		).ok_or(PacketError::UnknownTxMode)
+		).map_err(|_| PacketError::UnknownTxMode)
 	}
 
 	pub fn options(&self) -> Result<HashMap<&str, &str>, PacketError> {
