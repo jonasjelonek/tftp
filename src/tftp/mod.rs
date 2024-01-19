@@ -339,7 +339,7 @@ pub async fn receive_file<'a>(conn: TftpConnection, file: File, init_data: Optio
 ///
 /// send_file
 /// 
-/// It should be possible to use this for RRQ in server mode and WRQ in client mode
+/// This can be used for RRQ in server mode and WRQ in client mode
 pub async fn send_file(conn: TftpConnection, file: File) {
 	let filesize = file.metadata().unwrap().len();
 	let blocksize = conn.opt_blocksize();

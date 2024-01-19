@@ -114,8 +114,8 @@ pub enum ClientAction {
 impl ClientAction {
 	pub fn as_req_kind(&self) -> tftp::RequestKind {
 		match self {
-			Self::Get { opts } => tftp::RequestKind::Rrq,
-			Self::Put { opts } => tftp::RequestKind::Wrq,
+			Self::Get { opts: _ } => tftp::RequestKind::Rrq,
+			Self::Put { opts: _ } => tftp::RequestKind::Wrq,
 		}
 	}
 

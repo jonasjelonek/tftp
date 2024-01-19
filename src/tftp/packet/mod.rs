@@ -1,6 +1,8 @@
-use std::str::FromStr;
-use std::{collections::HashMap, fmt::Display};
-use std::ffi::CStr;
+use std::{
+	collections::HashMap,
+	fmt::Display,
+	ffi::CStr
+};
 
 use crate::tftp::{
 	consts,
@@ -130,12 +132,12 @@ impl<'a> TftpReq<'a> {
 			}
 		}
 
-		Mode::from_str(
-			CStr::from_bytes_until_nul(&buf[mode_pos..])
-				.map_err(|_| PacketError::NotNullTerminated)?
-				.to_str()
-				.map_err(|_| PacketError::InvalidCharacters)?
-		).map_err(|_| PacketError::UnknownTxMode)
+		CStr::from_bytes_until_nul(&buf[mode_pos..])
+			.map_err(|_| PacketError::NotNullTerminated)?
+			.to_str()
+			.map_err(|_| PacketError::InvalidCharacters)?
+			.parse()
+			.map_err(|_| PacketError::UnknownTxMode)
 	}
 
 	pub fn options(&self) -> Result<HashMap<&str, &str>, PacketError> {
