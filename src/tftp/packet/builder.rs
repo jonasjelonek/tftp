@@ -63,24 +63,27 @@ impl<'a, 'b> TftpReqBuilder<'a, 'b> {
 		self
 	}
 
-	fn write_to_buf(&mut self, buf: &mut [u8]) {
+	fn write_to_buf(&mut self, buf: &mut [u8]) -> usize {
 		buf[0..=1].copy_from_slice((self.kind as u16).to_be_bytes().as_slice());
 
+		let mut written: usize = 2;
 		let mut buf_ref = &mut buf[2..];
-		let _ = buf_ref.write(self.filename.as_bytes());
-		let _ = buf_ref.write(&[ 0 ]);
-		let _ = buf_ref.write(self.mode.as_str().as_bytes());
-		let _ = buf_ref.write(&[ 0 ]);
+		written += buf_ref.write(self.filename.as_bytes()).unwrap_or(0);
+		written += buf_ref.write(&[ 0 ]).unwrap_or(0);
+		written += buf_ref.write(self.mode.as_str().as_bytes()).unwrap_or(0);
+		written += buf_ref.write(&[ 0 ]).unwrap_or(0);
 
 		if let Some(opts) = self.options {
 			for opt in opts {
 				let tuple = opt.as_str_tuple();
-				let _ = buf_ref.write(tuple.0.as_bytes());
-				let _ = buf_ref.write(&[ 0 ]);
-				let _ = buf_ref.write(tuple.1.as_bytes());
-				let _ = buf_ref.write(&[ 0 ]);
+				written += buf_ref.write(tuple.0.as_bytes()).unwrap_or(0);
+				written += buf_ref.write(&[ 0 ]).unwrap_or(0);
+				written += buf_ref.write(tuple.1.as_bytes()).unwrap_or(0);
+				written += buf_ref.write(&[ 0 ]).unwrap_or(0);
 			}
 		}
+
+		written
 	}
 
 	pub fn build(mut self) -> TftpReq<'a> {
@@ -92,7 +95,9 @@ impl<'a, 'b> TftpReqBuilder<'a, 'b> {
 			},
 			None => {
 				let mut buf = vec![0; 64];
-				self.write_to_buf(&mut buf[..]);
+				let len = self.write_to_buf(&mut buf[..]);
+				buf.truncate(len);
+
 				TftpReq::from_owned(buf)
 			}
 		}
@@ -131,16 +136,20 @@ impl<'a> TftpOAckBuilder<'a> {
 		self
 	}
 
-	fn write_to_buf(&mut self, buf: &mut [u8]) {
+	fn write_to_buf(&mut self, buf: &mut [u8]) -> usize {
 		buf[0..=1].copy_from_slice(consts::OPCODE_OACK.to_be_bytes().as_slice());
+
+		let mut written: usize = 2;
 		let mut buf_opt = &mut buf[2..];
 		for opt in self.options.iter() {
 			let tuple = opt.as_str_tuple();
-			let _ = buf_opt.write(tuple.0.as_bytes());
-			let _ = buf_opt.write(&[ 0 ]);
-			let _ = buf_opt.write(tuple.1.as_bytes());
-			let _ = buf_opt.write(&[ 0 ]);
+			written += buf_opt.write(tuple.0.as_bytes()).unwrap_or(0);
+			written += buf_opt.write(&[ 0 ]).unwrap_or(0);
+			written += buf_opt.write(tuple.1.as_bytes()).unwrap_or(0);
+			written += buf_opt.write(&[ 0 ]).unwrap_or(0);
 		}
+
+		written
 	}
 
 	pub fn build(mut self) -> TftpOAck<'a> {
@@ -152,7 +161,9 @@ impl<'a> TftpOAckBuilder<'a> {
 			},
 			None => {
 				let mut buf = vec![0; 64];
-				self.write_to_buf(&mut buf[..]);
+				let len = self.write_to_buf(&mut buf[..]);
+				buf.truncate(len);
+
 				TftpOAck::from_owned(buf)
 			}
 		}
@@ -192,7 +203,7 @@ impl<'a> TftpErrorBuilder<'a> {
 		self
 	}
 
-	fn write_to_buf(&mut self, buf: &mut [u8]) {
+	fn write_to_buf(&mut self, buf: &mut [u8]) -> usize {
 		buf[0..=1].copy_from_slice(consts::OPCODE_ERROR.to_be_bytes().as_slice());
 		buf[2..=3].copy_from_slice((self.code as u16).to_be_bytes().as_slice());
 		
@@ -201,10 +212,15 @@ impl<'a> TftpErrorBuilder<'a> {
 			len += utils::copy(msg.as_bytes(), &mut buf[4..]);
 		}
 		
-		if len == buf.len() {
-			len -= 1;
+		match len == buf.len() {
+			true => buf[len - 1] = 0,
+			false => {
+				buf[len] = 0;
+				len += 1; /* account for null terminator */
+			},
 		}
-		buf[len] = 0;
+
+		len
 	}
 
 	pub fn build(mut self) -> TftpError<'a> {
@@ -216,7 +232,9 @@ impl<'a> TftpErrorBuilder<'a> {
 			},
 			None => {
 				let mut buf = vec![0; 64];
-				self.write_to_buf(&mut buf[..]);
+				let len = self.write_to_buf(&mut buf[..]);
+				buf.truncate(len);
+
 				TftpError::from_owned(buf)
 			}
 		}
