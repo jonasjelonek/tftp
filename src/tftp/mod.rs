@@ -280,19 +280,19 @@ impl TftpConnection {
 	}
 }
 
-pub async fn receive_file<'a>(conn: TftpConnection, file: File, init_data: Option<packet::TftpData<'a>>) {
-	let mut file = BufWriter::new(file);
+pub async fn receive_data<'a>(conn: TftpConnection, stream: impl Write, init_data: Option<packet::TftpData<'a>>) {
+	let mut buf_write = BufWriter::new(stream);
 	let blocksize = conn.opt_blocksize();
 	let mut blocknum: u16 = 0;
 	let mut data_buf: Vec<u8> = vec![0; 4 + (blocksize as usize)];
 
 	if let Some(first) = init_data {
-		if let Err(e) = file.write_all(first.data()) {
-			error!("failed to write to file due to lower layer error: {}", e);
+		if let Err(e) = buf_write.write_all(first.data()) {
+			error!("failed to write to output stream due to lower layer error: {}", e);
 			return conn.drop_with_err(ErrorCode::StorageError, "");
 		}
 
-		blocknum = blocknum.wrapping_add(1);
+		blocknum += 1;
 		
 		let ack_pkt = packet::MutableTftpAck::new(blocknum);
 		let _ = conn.send_packet(&ack_pkt);
@@ -309,7 +309,7 @@ pub async fn receive_file<'a>(conn: TftpConnection, file: File, init_data: Optio
 		let pkt = match conn.receive_packet(&mut data_buf[..], Some(packet::PacketKind::Data)) {
 			Ok(p) => p,
 			Err(e) => {
-				error!("Interrupted file transfer: {:?}", e);
+				error!("Interrupted data transfer: {:?}", e);
 				return conn.drop();
 			},
 		};
@@ -318,8 +318,8 @@ pub async fn receive_file<'a>(conn: TftpConnection, file: File, init_data: Optio
 			continue;
 		}
 
-		if let Err(e) = file.write_all(pkt.data()) {
-			error!("failed to write to file due to lower layer error: {}", e);
+		if let Err(e) = buf_write.write_all(pkt.data()) {
+			error!("failed to write to output stream due to lower layer error: {}", e);
 			return conn.drop_with_err(ErrorCode::StorageError, "");
 		}
 
@@ -332,69 +332,59 @@ pub async fn receive_file<'a>(conn: TftpConnection, file: File, init_data: Optio
 		}
 	}
 
-	let _ = file.flush();
-	debug!("received file")
+	let _ = buf_write.flush();
+	debug!("received data")
 }
 
 ///
-/// send_file
+/// send_data
 /// 
 /// This can be used for RRQ in server mode and WRQ in client mode
-pub async fn send_file(conn: TftpConnection, file: File) {
-	let filesize = file.metadata().unwrap().len();
-	let blocksize = conn.opt_blocksize();
-
+pub async fn send_data(conn: TftpConnection, stream: impl Read) {
 	if conn.tx_mode() == Mode::NetAscii {
 		return conn.drop_with_err(ErrorCode::IllegalOperation, "NetAscii mode not supported");
 	}
 
-	let mut file_read = BufReader::new(file);
+	let blocksize = conn.opt_blocksize();
+	let mut buf_read = BufReader::new(stream);
 	debug!("start sending file");
 
 	/* Use only one buffer for file read and packet send. The first 4 bytes are always reserved
 	 * for packet header and the file is read after that. */
-	let mut file_buf: Vec<u8> = vec![0; 4 + (blocksize as usize)];
-	let mut n_blocks = filesize / (blocksize as u64);
-	let remainder = filesize % (blocksize as u64);
-	if remainder != 0 {
-		/* +1 for remaining bytes */
-		n_blocks += 1;
-	}
+	let mut read_buf: Vec<u8> = Vec::with_capacity(4 + (blocksize as usize));
+	let mut sent_blocks: usize = 0;
+	let mut blocknum: u16 = 0;
 
-	for blocknum in 1..=n_blocks {
+	read_buf.extend([0; 4]);
+	loop {
 		if conn.host_cancelled() {
 			return conn.drop();
 		}
 
-		file_buf.truncate(4);
-		if let Err(e) = file_read.by_ref().take(blocksize as u64).read_to_end(&mut file_buf) {
-			error!("send_file interrupted: {}", e);
-			return conn.drop_with_err(ErrorCode::StorageError, "");
-		}
-		trace!("file_buf has len {} and capacity {}", file_buf.len(), file_buf.capacity());
-
-		let mut pkt = packet::MutableTftpData::try_from(&mut file_buf[..], true).unwrap();
+		let bytes_available = match buf_read.by_ref().take(blocksize as u64).read_to_end(&mut read_buf) {
+			Ok(b) => b,
+			Err(e) => {
+				error!("send_file interrupted: {}", e);
+				return conn.drop_with_err(ErrorCode::StorageError, "");
+			}
+		};
+		blocknum = blocknum.wrapping_add(1);
+		
+		let mut pkt = packet::MutableTftpData::try_from(&mut read_buf[..], true).unwrap();
 		pkt.set_blocknum(blocknum as u16);
 		
 		if let Err(e) = conn.send_and_receive_ack(&pkt) {
 			error!("send_file interrupted: {}", e);
 			return conn.drop();
 		}
-	}
 
-	/* send a final empty packet in case file_len mod blocksize == 0 */
-	if remainder == 0 {
-		file_buf.truncate(4);
-		
-		let mut pkt = packet::MutableTftpData::try_from(&mut file_buf[..], false).unwrap();
-		pkt.set_blocknum(pkt.blocknum() + 1);
-		pkt.set_data(consts::EMPTY_CHUNK);
-		
-		if let Err(e) = conn.send_and_receive_ack(&pkt) {
-			error!("send_file interrupted: {}", e);
-			return conn.drop();
+		sent_blocks += 1;
+		if bytes_available < (blocksize as usize) {
+			/* Stop if this was the last block */
+			break;
 		}
+		read_buf.truncate(4);
 	}
 
-	debug!("sent file");
+	debug!("sent file in {} blocks", sent_blocks);
 }

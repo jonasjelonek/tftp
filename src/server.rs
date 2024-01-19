@@ -140,8 +140,8 @@ impl TftpServer {
 	
 		info!("{:?} from {}", req.kind(), conn.peer());
 		match req.kind() {
-			tftp::RequestKind::Rrq => tftp::send_file(conn, file).await,
-			tftp::RequestKind::Wrq => tftp::receive_file(conn, file, None).await,
+			tftp::RequestKind::Rrq => tftp::send_data(conn, file).await,
+			tftp::RequestKind::Wrq => tftp::receive_data(conn, file, None).await,
 		};
 	}
 }

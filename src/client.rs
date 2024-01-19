@@ -83,7 +83,7 @@ impl TftpClient {
 				let ack_pkt = tftp::packet::MutableTftpAck::new(0);
 				let _ = conn.send_packet(&ack_pkt);
 
-				tftp::receive_file(conn, file, None).await;
+				tftp::receive_data(conn, file, None).await;
 			},
 			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::Data => {
 				if remote.ip() != server.ip() {
@@ -92,7 +92,7 @@ impl TftpClient {
 				conn.connect_to(server).unwrap();
 
 				let TftpPacket::Data(data) = pkt else { unreachable!() };
-				tftp::receive_file(conn, file, Some(data)).await
+				tftp::receive_data(conn, file, Some(data)).await
 			},
 			Ok((pkt, _)) => error!("Received packet of unexpected kind {}", pkt.packet_kind()),
 			Err(e) => error!("Server didn't properly respond to request ({})", e),
@@ -133,14 +133,14 @@ impl TftpClient {
 				let opts = tftp::options::parse_tftp_options(oack.options().unwrap()).unwrap();
 				conn.set_options(&opts[..]);
 
-				tftp::send_file(conn, file).await;
+				tftp::send_data(conn, file).await;
 			},
 			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::Ack => {
 				if remote.ip() != server.ip() {
 					return conn.drop();
 				}
 				conn.connect_to(server).unwrap();
-				tftp::send_file(conn, file).await
+				tftp::send_data(conn, file).await
 			},
 			Ok((pkt, _)) => error!("Received packet of unexpected kind {}", pkt.packet_kind()),
 			Err(e) => error!("Server didn't properly respond to request ({})", e),
