@@ -2,12 +2,13 @@ use std::net::{UdpSocket, SocketAddr, IpAddr};
 use std::str::FromStr;
 use std::{fmt::Display, time::Duration};
 use std::io::{self, Read, Write, BufReader, BufWriter};
-use std::fs::File;
 
 pub mod packet;
 pub mod options;
 pub mod utils;
 pub mod error;
+
+pub type Result<T> = std::result::Result<T, ConnectionError>;
 
 #[allow(unused)]
 use log::{info, warn, error, debug, trace};
@@ -41,7 +42,7 @@ use crate::tftp::{
 	packet::builder::TftpErrorBuilder,
 	packet::Packet,
 	error::ErrorCode,
-	error::ReceiveError,
+	error::{ConnectionError, ParseError},
 };
 use options::*;
 
@@ -84,13 +85,13 @@ impl Display for Mode {
 	}
 }
 impl FromStr for Mode {
-	type Err = error::ParseModeError;
+	type Err = ParseError;
 
-	fn from_str(s: &str) -> Result<Self, Self::Err> {
+	fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
 		match &(s.to_ascii_lowercase())[..] {
 			consts::TFTP_XFER_MODE_NETASCII => Ok(Self::NetAscii),
 			consts::TFTP_XFER_MODE_OCTET => Ok(Self::Octet),
-			_ => Err(error::ParseModeError)
+			_ => Err(ParseError::UnknownTxMode)
 		}
 	}
 }
@@ -106,7 +107,7 @@ pub struct TftpConnection {
 impl TftpConnection {
 
 	#[inline(always)]
-	pub fn new(local_addr: IpAddr, cxl_tok: CancellationToken) -> io::Result<Self> {
+	pub fn new(local_addr: IpAddr, cxl_tok: CancellationToken) -> Result<Self> {
 		let socket = UdpSocket::bind(SocketAddr::new(local_addr, 0))?;
 
 		let mut conn = Self {
@@ -134,8 +135,8 @@ impl TftpConnection {
 	// ###### SETTER ##########################################################
 	// ########################################################################
 
-	pub fn connect_to(&self, to: SocketAddr) -> io::Result<()> {
-		self.socket.connect(to)
+	pub fn connect_to(&self, to: SocketAddr) -> Result<()> {
+		Ok(self.socket.connect(to)?)
 	}
 
 	pub fn set_reply_timeout(&mut self, timeout: Duration) {
@@ -162,60 +163,60 @@ impl TftpConnection {
 	// ###### ACTIONS #########################################################
 	// ########################################################################
 
-	pub fn receive_packet_from<'a>(&self, buf: &'a mut [u8], expect: Option<packet::PacketKind>) -> Result<(packet::TftpPacket<'a>, SocketAddr), ReceiveError> {
+	pub fn receive_packet_from<'a>(&self, buf: &'a mut [u8], expect: Option<packet::PacketKind>) -> Result<(packet::TftpPacket<'a>, SocketAddr)> {
 		let pkt: packet::TftpPacket;
 		
 		match self.socket.recv_from(buf) {
 			Ok((len, tx)) => {
-				pkt = packet::TftpPacket::try_from_buf(&buf[..len])
-					.map_err(|e| ReceiveError::InvalidPacket(e))?;
+				pkt = packet::TftpPacket::try_from_buf(&buf[..len])?;
 
 				if let Some(exp_kind) = expect && pkt.packet_kind() != exp_kind {
-					return Err(ReceiveError::UnexpectedPacketKind);
+					return Err(ConnectionError::UnexpectedPacket);
 				} else {
 					return Ok((pkt, tx));
 				}
 			}, 
 			Err(e) => {
 				match e.kind() {
-					io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => return Err(ReceiveError::Timeout),
-					_ => return Err(ReceiveError::LowerLayer(e)),
+					io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => return Err(ConnectionError::Timeout),
+					_ => return Err(e.into()),
 				}
 			},
 		}
 	}
 
-	pub fn receive_packet<'a>(&self, buf: &'a mut [u8], expect: Option<packet::PacketKind>) -> Result<packet::TftpPacket<'a>, ReceiveError> {
+	pub fn receive_packet<'a>(&self, buf: &'a mut [u8], expect: Option<packet::PacketKind>) -> Result<packet::TftpPacket<'a>> {
 		let recv = self.receive_packet_from(buf, expect)?;
 		if let Ok(peer) = self.socket.peer_addr() && peer != recv.1 { /* IP and port must be the same for whole connection */
-			return Err(ReceiveError::UnknownTid);
+			self.send_error(ErrorCode::UnknownTid, "").ok();
+			return Err(ConnectionError::UnknownTid);
 		}
 
 		Ok(recv.0)
 	}
 
-	pub fn send_request_to(&self, req: &packet::TftpReq<'_>, to: SocketAddr) -> io::Result<()> {
-		self.socket.send_to(req.as_bytes(), to).map(|_| ())
+	pub fn send_request_to(&self, req: &packet::TftpReq<'_>, to: SocketAddr) -> Result<()> {
+		Ok(self.socket.send_to(req.as_bytes(), to).map(|_| ())?)
 	}
 
-	pub fn send_packet(&self, pkt: &impl packet::Packet) -> io::Result<()> {
-		self.socket.send(pkt.as_bytes()).map(|_| ())
+	pub fn send_packet(&self, pkt: &impl packet::Packet) -> Result<()> {
+		Ok(self.socket.send(pkt.as_bytes()).map(|_| ())?)
 	}
 
-	pub fn send_and_receive_ack<'a>(&self, data_pkt: &packet::MutableTftpData) -> Result<(), ReceiveError> {
+	pub fn send_and_receive_ack<'a>(&self, data_pkt: &packet::MutableTftpData) -> Result<()> {
 		let mut attempts: u8 = 0;
 		let mut buf: [u8; 16] = [0; 16];
 		loop {
 			if self.host_cancelled() {
-				return Err(ReceiveError::Timeout);
+				return Err(ConnectionError::Cancelled);
 			}
 
-			self.send_packet(data_pkt).map_err(|e| ReceiveError::LowerLayer(e))?;
+			self.send_packet(data_pkt)?;
 			match self.receive_packet(&mut buf, Some(packet::PacketKind::Ack)) {
 				Ok(reply) => {
 					let packet::TftpPacket::Ack(ack) = reply else { panic!() };
 					if ack.blocknum() != data_pkt.blocknum() {
-						return Err(ReceiveError::UnexpectedBlockAck);
+						return Err(ConnectionError::UnexpectedBlockAck);
 					}
 					return Ok(())
 				},
@@ -260,7 +261,7 @@ impl TftpConnection {
 		}
 	} */
 
-	pub fn send_error(&self, code: ErrorCode, msg: &str) {
+	pub fn send_error(&self, code: ErrorCode, msg: &str) -> Result<()> {
 		let mut buf: [u8; 64] = [0; 64];
 		let err_pkt = TftpErrorBuilder::new()
 			.with_buf(&mut buf[..])
@@ -268,86 +269,68 @@ impl TftpConnection {
 			.error_msg(msg)
 			.build();
 
-		let _ = self.socket.send(err_pkt.as_bytes());
+		self.socket.send(err_pkt.as_bytes())?;
 		error!("Tftp error: code {}; '{}'", code, msg);
-	}
-
-	pub fn drop(self) { }
-
-	pub fn drop_with_err(self, code: ErrorCode, msg: &str) {
-		self.send_error(code, msg);
-		return;
+		Ok(())
 	}
 }
 
-pub async fn receive_data<'a>(conn: TftpConnection, stream: impl Write, init_data: Option<packet::TftpData<'a>>) {
+pub async fn receive_data<'a>(conn: TftpConnection, stream: impl Write, init_data: Option<packet::TftpData<'a>>) -> Result<()> {
 	let mut buf_write = BufWriter::new(stream);
 	let blocksize = conn.opt_blocksize();
 	let mut blocknum: u16 = 0;
 	let mut data_buf: Vec<u8> = vec![0; 4 + (blocksize as usize)];
 
 	if let Some(first) = init_data {
-		if let Err(e) = buf_write.write_all(first.data()) {
-			error!("failed to write to output stream due to lower layer error: {}", e);
-			return conn.drop_with_err(ErrorCode::StorageError, "");
-		}
-
+		buf_write.write_all(first.data())?;
 		blocknum += 1;
 		
 		let ack_pkt = packet::MutableTftpAck::new(blocknum);
-		let _ = conn.send_packet(&ack_pkt);
+		conn.send_packet(&ack_pkt)?;
 		if first.data_len() < (blocksize as usize) {
-			return;
+			return Ok(());
 		}
 	}
 
 	loop {
 		if conn.host_cancelled() {
-			return conn.drop();
+			return Err(ConnectionError::Cancelled)
 		}
 
-		let pkt = match conn.receive_packet(&mut data_buf[..], Some(packet::PacketKind::Data)) {
-			Ok(p) => p,
-			Err(e) => {
-				error!("Interrupted data transfer: {:?}", e);
-				return conn.drop();
-			},
-		};
+		let pkt = conn.receive_packet(&mut data_buf[..], Some(packet::PacketKind::Data))?;
 		let packet::TftpPacket::Data(pkt) = pkt else { unreachable!() };
 		if pkt.blocknum() != blocknum.wrapping_add(1) {
 			continue;
 		}
 
-		if let Err(e) = buf_write.write_all(pkt.data()) {
-			error!("failed to write to output stream due to lower layer error: {}", e);
-			return conn.drop_with_err(ErrorCode::StorageError, "");
-		}
-
+		buf_write.write_all(pkt.data())?;
 		blocknum = blocknum.wrapping_add(1);
 		
 		let ack_pkt = packet::MutableTftpAck::new(blocknum);
-		let _ = conn.send_packet(&ack_pkt);
+		conn.send_packet(&ack_pkt)?;
 		if pkt.data_len() < (blocksize as usize) {
 			break;
 		}
 	}
 
-	let _ = buf_write.flush();
-	debug!("received data")
+	buf_write.flush().ok();
+	debug!("received data");
+	Ok(())
 }
 
 ///
 /// send_data
 /// 
 /// This can be used for RRQ in server mode and WRQ in client mode
-pub async fn send_data(conn: TftpConnection, stream: impl Read) {
+pub async fn send_data(conn: TftpConnection, stream: impl Read) -> Result<()> {
 	if conn.tx_mode() == Mode::NetAscii {
-		return conn.drop_with_err(ErrorCode::IllegalOperation, "NetAscii mode not supported");
+		conn.send_error(ErrorCode::IllegalOperation, "NetAscii mode not supported").ok();
+		return Err(ConnectionError::UnsupportedTxMode);
 	}
 
 	let blocksize = conn.opt_blocksize();
 	let mut buf_read = BufReader::new(stream);
-	debug!("start sending file");
+	//debug!("start sending file");
 
 	/* Use only one buffer for file read and packet send. The first 4 bytes are always reserved
 	 * for packet header and the file is read after that. */
@@ -358,25 +341,16 @@ pub async fn send_data(conn: TftpConnection, stream: impl Read) {
 	read_buf.extend([0; 4]);
 	loop {
 		if conn.host_cancelled() {
-			return conn.drop();
+			return Err(ConnectionError::Cancelled);
 		}
 
-		let bytes_available = match buf_read.by_ref().take(blocksize as u64).read_to_end(&mut read_buf) {
-			Ok(b) => b,
-			Err(e) => {
-				error!("send_file interrupted: {}", e);
-				return conn.drop_with_err(ErrorCode::StorageError, "");
-			}
-		};
-		blocknum = blocknum.wrapping_add(1);
-		
+		let bytes_available = buf_read.by_ref().take(blocksize as u64).read_to_end(&mut read_buf)?;
 		let mut pkt = packet::MutableTftpData::try_from(&mut read_buf[..], true).unwrap();
+		
+		blocknum = blocknum.wrapping_add(1);
 		pkt.set_blocknum(blocknum as u16);
 		
-		if let Err(e) = conn.send_and_receive_ack(&pkt) {
-			error!("send_file interrupted: {}", e);
-			return conn.drop();
-		}
+		conn.send_and_receive_ack(&pkt)?;
 
 		sent_blocks += 1;
 		if bytes_available < (blocksize as usize) {
@@ -387,4 +361,5 @@ pub async fn send_data(conn: TftpConnection, stream: impl Read) {
 	}
 
 	debug!("sent file in {} blocks", sent_blocks);
+	Ok(())
 }

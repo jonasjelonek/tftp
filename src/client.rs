@@ -12,6 +12,9 @@ use crate::tftp::options::{TftpOption, TftpOptionKind};
 use crate::tftp::{self, RequestKind, Mode, TftpConnection};
 use crate::tftp::packet::{PacketKind, TftpPacket};
 use crate::tftp::packet::builder::*;
+use crate::tftp::error::{ConnectionError, RequestError};
+
+pub type Result<T> = std::result::Result<T, RequestError>;
 
 pub struct TftpRequestParameters<'a> {
 	pub req_kind: RequestKind,
@@ -40,19 +43,21 @@ impl TftpClient {
 			Err(e) => return error!("failed to do request due to lower layer error: {}", e),
 		};
 
-		match req_params.req_kind {
+		let result = match req_params.req_kind {
 			RequestKind::Rrq => self.get(conn, req_params.server, req_params.file, req_params.options).await,
 			RequestKind::Wrq => self.put(conn, req_params.server, req_params.file, req_params.options).await,
-		}
+		};
+
 	}
 
-	async fn get(&mut self, mut conn: TftpConnection, server: SocketAddr, file_path: PathBuf, options: &[TftpOption]) {
+	async fn get(&mut self, mut conn: TftpConnection, server: SocketAddr, file_path: PathBuf, options: &[TftpOption]) -> Result<()> {
 		let filename = file_path.file_name().unwrap().to_string_lossy();
 		let file = match OpenOptions::new().create(true).write(true).truncate(true).open(&file_path) {
 			Ok(f) => f,
-			Err(e) => return error!("Could not open file for GET request: {}", e),
+			Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return Err(RequestError::FileNotAccessible),
+			Err(e) => return Err(RequestError::OtherHostError(e))
 		};
-
+		
 		let mut builder = TftpReqBuilder::new()
 			.kind(RequestKind::Rrq)
 			.mode(Mode::Octet)
@@ -62,7 +67,7 @@ impl TftpClient {
 			builder = builder.options(options);
 		}
 		let pkt = builder.build();
-		conn.send_request_to(&pkt, server);
+		conn.send_request_to(&pkt, server)?;
 
 		/* Handle the first packet coming from the server here instead of in receive_file.
 		 * We don't know which port the server will use to reply, and handling this should
@@ -72,38 +77,41 @@ impl TftpClient {
 		match conn.receive_packet_from(&mut buf, None) {
 			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::OAck => {
 				if remote.ip() != server.ip() {
-					return conn.drop();
+					return Err(RequestError::UnknownPeer);
 				}
-				conn.connect_to(remote).unwrap();
+				conn.connect_to(remote)?;
 
 				let TftpPacket::OAck(oack) = pkt else { unreachable!() };
 				let opts = tftp::options::parse_tftp_options(oack.options().unwrap()).unwrap();
 				conn.set_options(&opts[..]);
 
 				let ack_pkt = tftp::packet::MutableTftpAck::new(0);
-				let _ = conn.send_packet(&ack_pkt);
+				conn.send_packet(&ack_pkt)?;
 
-				tftp::receive_data(conn, file, None).await;
+				tftp::receive_data(conn, file, None).await?;
 			},
 			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::Data => {
 				if remote.ip() != server.ip() {
-					return conn.drop();
+					return Err(RequestError::UnknownPeer);
 				}
-				conn.connect_to(server).unwrap();
+				conn.connect_to(remote)?;
 
 				let TftpPacket::Data(data) = pkt else { unreachable!() };
-				tftp::receive_data(conn, file, Some(data)).await
+				tftp::receive_data(conn, file, Some(data)).await?
 			},
-			Ok((pkt, _)) => error!("Received packet of unexpected kind {}", pkt.packet_kind()),
-			Err(e) => error!("Server didn't properly respond to request ({})", e),
+			Ok((_pkt, _)) => return Err(ConnectionError::UnexpectedPacket.into()),
+			Err(e) => return Err(RequestError::ConnectionError(e)),
 		};
+		Ok(())
 	}
 
-	async fn put(&mut self, mut conn: TftpConnection, server: SocketAddr, file_path: PathBuf, options: &[TftpOption]) {
+	async fn put(&mut self, mut conn: TftpConnection, server: SocketAddr, file_path: PathBuf, options: &[TftpOption]) -> Result<()> {
 		let filename = file_path.file_name().unwrap().to_string_lossy();
 		let file = match OpenOptions::new().read(true).open(&file_path) {
 			Ok(f) => f,
-			Err(e) => return error!("Could not open file for PUT request: {}", e),
+			Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(RequestError::FileNotFound),
+			Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return Err(RequestError::FileNotAccessible),
+			Err(e) => return Err(RequestError::OtherHostError(e))
 		};
 
 		let mut builder = TftpReqBuilder::new()
@@ -119,13 +127,13 @@ impl TftpClient {
 			builder = builder.options(&options[..]);
 		}
 		let pkt = builder.build();
-		conn.send_request_to(&pkt, server);
+		conn.send_request_to(&pkt, server)?;
 
 		let mut buf = [0u8; 64];
 		match conn.receive_packet_from(&mut buf, None) {
 			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::OAck => {
 				if remote.ip() != server.ip() {
-					return conn.drop();
+					return Err(RequestError::UnknownPeer);
 				}
 				conn.connect_to(remote).unwrap();
 
@@ -133,22 +141,23 @@ impl TftpClient {
 				let opts = tftp::options::parse_tftp_options(oack.options().unwrap()).unwrap();
 				conn.set_options(&opts[..]);
 
-				tftp::send_data(conn, file).await;
+				tftp::send_data(conn, file).await?;
 			},
 			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::Ack => {
 				if remote.ip() != server.ip() {
-					return conn.drop();
+					return Err(RequestError::UnknownPeer);
 				}
 				conn.connect_to(server).unwrap();
-				tftp::send_data(conn, file).await
+				tftp::send_data(conn, file).await?
 			},
-			Ok((pkt, _)) => error!("Received packet of unexpected kind {}", pkt.packet_kind()),
-			Err(e) => error!("Server didn't properly respond to request ({})", e),
+			Ok((pkt, _)) => return Err(ConnectionError::UnexpectedPacket.into()),
+			Err(e) => return Err(RequestError::ConnectionError(e)),
 		}
+		Ok(())
 	}
 }
 
-pub async fn run_client(action: cli::ClientAction, opts: cli::ClientOpts, cxl_token: CancellationToken) -> Result<(), String> {
+pub async fn run_client(action: cli::ClientAction, opts: cli::ClientOpts, cxl_token: CancellationToken) -> Result<()> {
 	let local_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
 	let mut client = TftpClient::new(local_addr, cxl_token);
 

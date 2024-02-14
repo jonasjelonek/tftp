@@ -1,27 +1,83 @@
 use std::fmt::Display;
+use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum PacketError {
+#[derive(Debug, Error)]
+pub enum RequestError {
+	#[error("received response from an unknown peer")]
+	UnknownPeer,
+	#[error("the requested file could not be found")]
+	FileNotFound,
+	#[error("the file is not accessible for reading/writing")]
+	FileNotAccessible,
+	#[error("option negotiation with peer failed: {0}")]
+	OptionNegotiationFailed(#[from] OptionError),
+	#[error("")]
+	MalformedRequest,
+	#[error("")]
+	ConnectionError(#[from] ConnectionError),
+	#[error("")]
+	OtherHostError(std::io::Error)
+}
+
+#[derive(Debug, Error)]
+pub enum ConnectionError {
+	#[error("connection/transfer was cancelled by the host")]
+	Cancelled,
+	#[error("received an unexpected packet")]
+	UnexpectedPacket,
+	#[error("received ACK for an unexpected block")]
+	UnexpectedBlockAck,
+	#[error("timeout occured")]
+	Timeout,
+	#[error("received response with an unknown TID")]
+	UnknownTid,
+	#[error("peer requested an unsupported transfer mode")]
+	UnsupportedTxMode,
+	#[error("response is invalid: {0}")]
+	InvalidResponse(#[from] ParseError),
+	#[error("input/output error: {0}")]
+	IO(#[from] std::io::Error)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+pub enum ParseError {
+	#[error("")]
 	UnexpectedEof,
+	#[error("")]
 	MalformedPacket,
+	#[error("")]
 	UnexpectedOpcode,
-	InvalidOpcode,
+	#[error("{0} is not valid opcode")]
+	InvalidOpcode(u16),
+	#[error("null terminator is missing")]
 	NotNullTerminated,
-	InvalidCharacters,
+	#[error("string contains non-ascii characters")]
+	NotAscii,
+	#[error("")]
 	UnknownTxMode,
 }
-impl Display for PacketError {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			Self::InvalidCharacters => write!(f, "Invalid characters"),
-			Self::InvalidOpcode => write!(f, "Invalid opcode"),
-			Self::UnexpectedOpcode => write!(f, "Unexpected opcode"),
-			Self::MalformedPacket => write!(f, "Malformed packet"),
-			Self::NotNullTerminated => write!(f, "Missing null termination"),
-			Self::UnexpectedEof => write!(f, "Unexpected EOF"),
-			Self::UnknownTxMode => write!(f, "Unknown transfer mode"),
-		}
+
+impl From<std::ffi::FromBytesUntilNulError> for ParseError {
+	fn from(_: std::ffi::FromBytesUntilNulError) -> Self {
+		Self::NotNullTerminated
 	}
+}
+impl From<std::str::Utf8Error> for ParseError {
+	fn from(_: std::str::Utf8Error) -> Self {
+		Self::NotAscii
+	}
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+pub enum OptionError {
+	#[error("")]
+	InvalidOption,
+	#[error("")]
+	UnsupportedOption,
+	#[error("")]
+	UnexpectedValue,
+	#[error("")]
+	NoAck,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -43,7 +99,7 @@ impl Display for ErrorCode {
 	}
 }
 impl TryFrom<u16> for ErrorCode {
-	type Error = PacketError;
+	type Error = ParseError;
 
 	fn try_from(value: u16) -> Result<Self, Self::Error> {
 		match value {
@@ -56,36 +112,7 @@ impl TryFrom<u16> for ErrorCode {
 			6 => Ok(Self::FileExists),
 			7 => Ok(Self::NoSuchUser),
 			8 => Ok(Self::InvalidOption),
-			_ => Err(PacketError::MalformedPacket)
-		}
-	}
-}
-
-pub struct ParseModeError;
-impl Display for ParseModeError {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		write!(f, "Invalid mode identifier")
-	}
-}
-
-#[derive(Debug)]
-pub enum ReceiveError {
-	UnexpectedPacketKind,
-	UnexpectedBlockAck,
-	Timeout,
-	UnknownTid,
-	InvalidPacket(PacketError),
-	LowerLayer(std::io::Error),
-}
-impl Display for ReceiveError {
-	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		match self {
-			Self::UnknownTid => write!(f, "Unknown or unexpected TID"),
-			Self::Timeout => write!(f, "Timeout"),
-			Self::UnexpectedPacketKind => write!(f, "Unexpected kind of packet"),
-			Self::UnexpectedBlockAck => write!(f, "ACK for unexpected block number"),
-			Self::InvalidPacket(e) => write!(f, "Invalid packet ({})", e),
-			Self::LowerLayer(e) => write!(f, "LowerLayer error: {}", e),
+			_ => Err(ParseError::MalformedPacket)
 		}
 	}
 }

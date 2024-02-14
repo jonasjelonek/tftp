@@ -1,18 +1,18 @@
-use std::{
-	collections::HashMap,
-	fmt::Display,
-	ffi::CStr
-};
+use std::collections::HashMap;
+use std::fmt::Display;
+use std::ffi::CStr;
 
 use crate::tftp::{
 	consts,
-	RequestKind,
+	error::{ErrorCode, ParseError},
 	Mode,
-	error::ErrorCode,
-	error::PacketError,
+	RequestKind,
+	utils
 };
 
 pub mod builder;
+
+pub type Result<T> = std::result::Result<T, ParseError>;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PacketKind {
@@ -94,13 +94,13 @@ impl<'a> TftpReq<'a> {
 	/// Checks if the given slice contains valid TftpReq content.
 	/// 
 	/// *This is used by the TryFrom<> trait implementations.*
-	fn check_from_slice(buf: &'a [u8]) -> Result<(), PacketError> {
+	fn check_from_slice(buf: &'a [u8]) -> Result<()> {
 		if buf.len() < 6 {
-			Err(PacketError::UnexpectedEof)
+			Err(ParseError::UnexpectedEof)
 		} else {
 			match u16::from_be_bytes([ buf[0], buf[1] ]) {
 				consts::OPCODE_RRQ | consts::OPCODE_WRQ => Ok(()),
-				_ => Err(PacketError::UnexpectedOpcode),
+				_ => Err(ParseError::UnexpectedOpcode),
 			}
 		}
 	}
@@ -114,15 +114,12 @@ impl<'a> TftpReq<'a> {
 		}
 	}
 
-	pub fn filename(&self) -> Result<&str, PacketError> {
+	pub fn filename(&self) -> Result<&str> {
 		let buf = self.inner();
-		CStr::from_bytes_until_nul(&buf[2..])
-			.map_err(|_| PacketError::NotNullTerminated)?
-			.to_str()
-			.map_err(|_| PacketError::InvalidCharacters)
+		Ok(CStr::from_bytes_until_nul(&buf[2..])?.to_str()?)
 	}
 
-	pub fn mode(&self) -> Result<Mode, PacketError> {
+	pub fn mode(&self) -> Result<Mode> {
 		let buf = self.inner();
 		let mut mode_pos = 0;
 		for i in 2..(buf.len() - 1) {
@@ -132,15 +129,13 @@ impl<'a> TftpReq<'a> {
 			}
 		}
 
-		CStr::from_bytes_until_nul(&buf[mode_pos..])
-			.map_err(|_| PacketError::NotNullTerminated)?
-			.to_str()
-			.map_err(|_| PacketError::InvalidCharacters)?
-			.parse()
-			.map_err(|_| PacketError::UnknownTxMode)
+		Ok(CStr::from_bytes_until_nul(&buf[mode_pos..])?
+			.to_str()?
+			.parse()?
+		)
 	}
 
-	pub fn options(&self) -> Result<HashMap<&str, &str>, PacketError> {
+	pub fn options(&self) -> Result<HashMap<&str, &str>> {
 		let buf = self.inner();
 		let mut options: HashMap<&str, &str> = HashMap::new();
 		let mut iter = buf[2..].split(|e| *e == 0x00);
@@ -152,14 +147,11 @@ impl<'a> TftpReq<'a> {
 				break;
 			}
 
-			let key = std::str::from_utf8(elem)
-				.map_err(|_| PacketError::InvalidCharacters)?;
+			let key = std::str::from_utf8(elem)?;
 			let Some(value_raw) = iter.next() else { 
-				return Err(PacketError::MalformedPacket) 
+				return Err(ParseError::MalformedPacket) 
 			};
-			let value = std::str::from_utf8(value_raw)
-				.map_err(|_| PacketError::InvalidCharacters)?;
-
+			let value = std::str::from_utf8(value_raw)?;
 			options.insert(key, value);
 		}
 
@@ -171,17 +163,17 @@ impl<'a> Packet for TftpReq<'a> {
 	fn as_bytes(&self) -> &[u8] { self.inner() }
 }
 impl<'a> TryFrom<&'a [u8]> for TftpReq<'a> {
-	type Error = PacketError;
+	type Error = ParseError;
 
-	fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+	fn try_from(buf: &'a [u8]) -> Result<Self> {
 		TftpReq::check_from_slice(buf)?;
 		Ok(Self::from_borrowed(buf))
 	}
 }
 impl TryFrom<Vec<u8>> for TftpReq <'_> {
-	type Error = PacketError;
+	type Error = ParseError;
 
-	fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
+	fn try_from(vec: Vec<u8>) -> Result<Self> {
 		TftpReq::check_from_slice(&vec[..])?;
 		Ok(Self::from_owned(vec))
 	}
@@ -209,13 +201,13 @@ impl <'a> TftpData<'a> {
 		}
 	}
 
-	fn check_from_slice(buf: &'a [u8]) -> Result<(), PacketError> {
+	fn check_from_slice(buf: &'a [u8]) -> Result<()> {
 		if buf.len() < 4 {
-			return Err(PacketError::UnexpectedEof);
+			return Err(ParseError::UnexpectedEof);
 		}
 		match u16::from_be_bytes([ buf[0], buf[1] ]) {
 			consts::OPCODE_DATA => (),
-			_ => return Err(PacketError::UnexpectedOpcode),
+			_ => return Err(ParseError::UnexpectedOpcode),
 		}
 		Ok(())
 	}
@@ -233,17 +225,17 @@ impl<'a> Packet for TftpData<'a> {
 	fn as_bytes(&self) -> &[u8] { self.inner() }
 }
 impl<'a> TryFrom<&'a [u8]> for TftpData<'a> {
-	type Error = PacketError;
+	type Error = ParseError;
 
-	fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+	fn try_from(buf: &'a [u8]) -> Result<Self> {
 		TftpData::check_from_slice(buf)?;
 		Ok(Self::from_borrowed(buf))
 	}
 }
 impl TryFrom<Vec<u8>> for TftpData<'_> {
-	type Error = PacketError;
+	type Error = ParseError;
 
-	fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
+	fn try_from(vec: Vec<u8>) -> Result<Self> {
 		TftpData::check_from_slice(&vec[..])?;
 		Ok(Self::from_owned(vec))
 	}
@@ -271,13 +263,13 @@ impl<'a> TftpAck<'a> {
 		}
 	}
 
-	pub fn check_from_slice(buf: &'a [u8]) -> Result<(), PacketError> {
+	pub fn check_from_slice(buf: &'a [u8]) -> Result<()> {
 		if buf.len() < 4 {
-			return Err(PacketError::UnexpectedEof);
+			return Err(ParseError::UnexpectedEof);
 		}
 		match u16::from_be_bytes([ buf[0], buf[1] ]) {
 			consts::OPCODE_ACK => (),
-			_ => return Err(PacketError::UnexpectedOpcode),
+			_ => return Err(ParseError::UnexpectedOpcode),
 		}
 		Ok(())
 	}
@@ -292,17 +284,17 @@ impl<'a> Packet for TftpAck<'a> {
 	fn as_bytes(&self) -> &[u8] { self.inner() }
 }
 impl<'a> TryFrom<&'a [u8]> for TftpAck<'a> {
-	type Error = PacketError;
+	type Error = ParseError;
 
-	fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+	fn try_from(buf: &'a [u8]) -> Result<Self> {
 		TftpAck::check_from_slice(buf)?;
 		Ok(Self::from_borrowed(buf))
 	}
 }
 impl TryFrom<Vec<u8>> for TftpAck<'_> {
-	type Error = PacketError;
+	type Error = ParseError;
 
-	fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
+	fn try_from(vec: Vec<u8>) -> Result<Self> {
 		TftpAck::check_from_slice(&vec[..])?;
 		Ok(Self::from_owned(vec))
 	}
@@ -330,17 +322,17 @@ impl<'a> TftpOAck<'a> {
 		}
 	}
 
-	fn check_from_slice(buf: &'a [u8]) -> Result<(), PacketError> {
+	fn check_from_slice(buf: &'a [u8]) -> Result<()> {
 		if buf.len() < 6 {
-			return Err(PacketError::UnexpectedEof);
+			return Err(ParseError::UnexpectedEof);
 		}
 		if u16::from_be_bytes([ buf[0], buf[1] ]) != consts::OPCODE_OACK {
-			return Err(PacketError::UnexpectedOpcode);
+			return Err(ParseError::UnexpectedOpcode);
 		}
 		Ok(())
 	}
 
-	pub fn options(&self) -> Result<HashMap<&str, &str>, PacketError> {
+	pub fn options(&self) -> Result<HashMap<&str, &str>> {
 		let buf = self.inner();
 		let mut options: HashMap<&str, &str> = HashMap::new();
 		let mut iter = buf[2..].split(|e| *e == 0x00);
@@ -350,13 +342,11 @@ impl<'a> TftpOAck<'a> {
 				break;
 			}
 
-			let key = std::str::from_utf8(elem)
-				.map_err(|_| PacketError::InvalidCharacters)?;
+			let key = std::str::from_utf8(elem)?;
 			let Some(value_raw) = iter.next() else { 
-				return Err(PacketError::MalformedPacket) 
+				return Err(ParseError::MalformedPacket) 
 			};
-			let value = std::str::from_utf8(value_raw)
-				.map_err(|_| PacketError::InvalidCharacters)?;
+			let value = std::str::from_utf8(value_raw)?;
 
 			options.insert(key, value);
 		}
@@ -369,17 +359,17 @@ impl<'a> Packet for TftpOAck<'a> {
 	#[inline] fn as_bytes(&self) -> &[u8] { self.inner() }
 }
 impl<'a> TryFrom<&'a [u8]> for TftpOAck<'a> {
-	type Error = PacketError;
+	type Error = ParseError;
 
-	fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+	fn try_from(buf: &'a [u8]) -> Result<Self> {
 		TftpOAck::check_from_slice(buf)?;
 		Ok(Self::from_borrowed(buf))
 	}
 }
 impl TryFrom<Vec<u8>> for TftpOAck<'_> {
-	type Error = PacketError;
+	type Error = ParseError;
 
-	fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
+	fn try_from(vec: Vec<u8>) -> Result<Self> {
 		TftpOAck::check_from_slice(&vec[..])?;
 		Ok(Self::from_owned(vec))
 	}
@@ -407,12 +397,12 @@ impl<'a> TftpError<'a> {
 		}
 	}
 
-	fn check_from_slice(buf: &'a [u8]) -> Result<(), PacketError> {
+	fn check_from_slice(buf: &'a [u8]) -> Result<()> {
 		if buf.len() < 6 {
-			return Err(PacketError::UnexpectedEof);
+			return Err(ParseError::UnexpectedEof);
 		}
 		if u16::from_be_bytes([ buf[0], buf[1] ]) != consts::OPCODE_OACK {
-			return Err(PacketError::UnexpectedOpcode);
+			return Err(ParseError::UnexpectedOpcode);
 		}
 		Ok(())
 	}
@@ -431,17 +421,17 @@ impl<'a> Packet for TftpError<'a> {
 	#[inline] fn as_bytes(&self) -> &[u8] { self.inner() }
 }
 impl<'a> TryFrom<&'a [u8]> for TftpError<'a> {
-	type Error = PacketError;
+	type Error = ParseError;
 
-	fn try_from(buf: &'a [u8]) -> Result<Self, Self::Error> {
+	fn try_from(buf: &'a [u8]) -> Result<Self> {
 		TftpError::check_from_slice(buf)?;
 		Ok(Self::from_borrowed(buf))
 	}
 }
 impl TryFrom<Vec<u8>> for TftpError<'_> {
-	type Error = PacketError;
+	type Error = ParseError;
 
-	fn try_from(vec: Vec<u8>) -> Result<Self, Self::Error> {
+	fn try_from(vec: Vec<u8>) -> Result<Self> {
 		TftpError::check_from_slice(&vec[..])?;
 		Ok(Self::from_owned(vec))
 	}
@@ -465,14 +455,14 @@ impl<'a> TftpPacket<'a> {
 		}
 	}
 
-	pub fn try_from_buf(buf: &'a [u8]) -> Result<Self, PacketError> {
+	pub fn try_from_buf(buf: &'a [u8]) -> Result<Self> {
 		Ok(
 			match u16::from_be_bytes([ buf[0], buf[1] ]) {
 				consts::OPCODE_RRQ | consts::OPCODE_WRQ => Self::Req(TftpReq::try_from(buf)?),
 				consts::OPCODE_ACK => Self::Ack(TftpAck::try_from(buf)?),
 				consts::OPCODE_OACK => Self::OAck(TftpOAck::try_from(buf)?),
 				consts::OPCODE_DATA => Self::Data(TftpData::try_from(buf)?),
-				_ => return Err(PacketError::InvalidOpcode),
+				x => return Err(ParseError::InvalidOpcode(x)),
 			}
 		)
 	}
@@ -555,9 +545,9 @@ impl<'a> MutableTftpData<'a> {
 		}
 	}
 
-	pub fn try_from(buf: &'a mut [u8], is_filled: bool) -> Result<Self, ()> {
+	pub fn try_from(buf: &'a mut [u8], is_filled: bool) -> Result<Self> {
 		if buf.len() < 4 {
-			return Err(());
+			return Err(ParseError::UnexpectedEof);
 		}
 
 		buf[0..=1].copy_from_slice(&consts::OPCODE_DATA.to_be_bytes());
@@ -688,22 +678,26 @@ pub struct MutableTftpError<'a> {
 	data_len: usize,
 }
 impl<'a> MutableTftpError<'a> {
-	pub fn with(buf: &'a mut [u8], err_code: super::ErrorCode, err_msg: &str) -> Result<Self, String> {
+
+	///
+	/// This panics in case the supplied buffer is too small!
+	/// 
+	pub fn with(buf: &'a mut [u8], err_code: ErrorCode, err_msg: &str) -> Self {
 		let mut len: usize = 4;
 		if buf.len() < (5 + err_msg.len()) {
-			return Err(format!("Need larger buffer for a valid ERROR packet!"));
+			panic!()
 		}
 
-		buf[0..=1].copy_from_slice(&super::consts::OPCODE_ERROR.to_be_bytes()[..]);
+		buf[0..=1].copy_from_slice(&consts::OPCODE_ERROR.to_be_bytes()[..]);
 		buf[2..=3].copy_from_slice(&(err_code as u16).to_be_bytes()[..]);
 		if err_msg.len() > 0 && err_msg.is_ascii() {
 			let max_len = buf.len() - 1;
-			let copied = super::utils::copy(err_msg.as_bytes(), &mut buf[4..max_len]);
+			let copied = utils::copy(err_msg.as_bytes(), &mut buf[4..max_len]);
 			len += copied;
 		}
 		buf[len] = 0;
 
-		Ok(Self { buf, data_len: len })
+		Self { buf, data_len: len }
 	}
 
 	pub fn set_error_code(&mut self, code: ErrorCode) {

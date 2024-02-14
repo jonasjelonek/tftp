@@ -64,14 +64,16 @@ async fn main() {
 		sigint_token.cancel();
 	}).unwrap();
 
-	let res = match options.run_mode {
+	match options.run_mode {
 		cli::RunMode::Server { bind, port } => {
 			server::run_server((bind, port).into(), cancel_token).await
 		},
-		cli::RunMode::Client { client_opts, action } => client::run_client(action, client_opts, cancel_token).await,
+		cli::RunMode::Client { client_opts, action } => {
+			client::run_client(action, client_opts, cancel_token).await.unwrap()
+		},
 	};
 
-	if let Err(e) = res {
+	/*if let Err(e) = res {
 		return error!("{}", e);
-	}
+	}*/
 }

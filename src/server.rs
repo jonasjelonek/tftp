@@ -9,19 +9,16 @@ use tokio_util::sync::CancellationToken;
 #[allow(unused)]
 use log::{info, warn, error, debug, trace};
 
-use crate::tftp::{
-	self,
-	/* submodules */
-	options::{*, self},
-	packet as pkt,
-	error::ErrorCode,
-
-	Mode, RequestKind, TftpConnection
-};
+use crate::tftp::error::{ConnectionError, ErrorCode, OptionError, RequestError};
+use crate::tftp::{self, Mode, RequestKind, TftpConnection};
+use crate::tftp::options::{parse_tftp_options, TftpOption, TftpOptionKind};
+use crate::tftp::packet as pkt;
 
 // ############################################################################
 // ############################################################################
 // ############################################################################
+
+pub type Result<T> = std::result::Result<T, RequestError>;
 
 pub struct TftpServer {
 	listen_addr: IpAddr,
@@ -46,14 +43,12 @@ impl TftpServer {
 		raw_opts: HashMap<&'a str, &'a str>,
 		transfer_size: u32,
 		req_kind: RequestKind
-	) -> Result<bool, OptionError> {
+	) -> Result<bool> {
 		if raw_opts.is_empty() {
 			return Ok(false);
 		}
 		
-		let mut requested_options = options
-			::parse_tftp_options(raw_opts)
-			.map_err(|_| OptionError::InvalidOption)?;
+		let mut requested_options = parse_tftp_options(raw_opts)?;
 
 		// Set transfer size if client requested it
 		if req_kind == RequestKind::Rrq {
@@ -61,14 +56,14 @@ impl TftpServer {
 				*tf_size = TftpOption::TransferSize(transfer_size);
 			}
 		} else {
-			// Check if enough space is available
+			// TODO: Check if enough space is available
 		}
 
 		let oack_pkt = pkt::builder::TftpOAckBuilder
 			::new()
 			.options(&requested_options[..])
 			.build();
-		conn.send_packet(&oack_pkt);
+		conn.send_packet(&oack_pkt)?;
 
 		if req_kind == RequestKind::Rrq {
 			let mut buf: [u8; 16] = [0; 16];
@@ -81,29 +76,29 @@ impl TftpServer {
 		Ok(true)
 	}
 
-	pub async fn handle_request<'a>(&self, req: pkt::TftpReq<'a>, client: SocketAddr) {
-		let mut conn = match TftpConnection::new(
+	pub async fn handle_request<'a>(&self, req: pkt::TftpReq<'a>, client: SocketAddr) -> Result<()> {
+		let mut conn = TftpConnection::new(
 			self.listen_addr,
 			self.cancel_token.clone()
-		) {
-			Ok(con) => con,
-			Err(e) => return error!("failed to handle request due to lower layer error: {}", e),
-		};
-		conn.connect_to(client);
+		)?;
+		conn.connect_to(client)?;
 
 		match req.mode() {
 			Ok(mode) if mode == Mode::Octet => (),
-			Ok(mode) if mode == Mode::NetAscii => {
-				return conn.drop_with_err(ErrorCode::NotDefined, "NetAscii mode not supported")
-			},
-			Ok(_) | Err(_) => {
-				return conn.drop_with_err(ErrorCode::NotDefined, "Malformed request; invalid mode")
+			Ok(_) => {
+				conn.send_error(ErrorCode::NotDefined, "Unsupported transfer mode").ok();
+				return Err(ConnectionError::UnsupportedTxMode.into());
+			}, 
+			Err(_) => {
+				conn.send_error(ErrorCode::NotDefined, "Malformed request; invalid mode").ok();
+				return Err(RequestError::MalformedRequest);
 			},
 		}
 	
 		let mut path = crate::working_dir().clone();
 		let Ok(filename) = req.filename() else {
-			return conn.drop_with_err(ErrorCode::NotDefined, "Malformed request; missing filename");
+			conn.send_error(ErrorCode::NotDefined, "Malformed request; missing filename").ok();
+			return Err(RequestError::MalformedRequest);
 		};
 		path.push(filename);
 
@@ -115,9 +110,18 @@ impl TftpServer {
 
 		let file = match file_opts.open(&path) {
 			Ok(f) => f,
-			Err(e) if e.kind() == io::ErrorKind::NotFound => return conn.drop_with_err(ErrorCode::FileNotFound, ""),
-			Err(e) if e.kind() == io::ErrorKind::PermissionDenied => return conn.drop_with_err(ErrorCode::AccessViolation, ""),
-			Err(e) => return conn.drop_with_err(ErrorCode::StorageError, e.to_string().as_str()),
+			Err(e) if e.kind() == io::ErrorKind::NotFound => {
+				conn.send_error(ErrorCode::FileNotFound, "").ok();
+				return Err(RequestError::FileNotFound);
+			},
+			Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+				conn.send_error(ErrorCode::AccessViolation, "").ok();
+				return Err(RequestError::FileNotAccessible);
+			},
+			Err(e) => {
+				conn.send_error(ErrorCode::StorageError, e.to_string().as_str()).ok();
+				return Err(RequestError::OtherHostError(e));
+			},
 		};
 		let file_len = match req.kind() {
 			RequestKind::Wrq => 0,
@@ -126,12 +130,12 @@ impl TftpServer {
 
 		/* Read, parse and acknowledge/reject options requested by the client. */
 		match self.negotiate_options(&mut conn, req.options().unwrap(), file_len, req.kind()).await {
-			Err(_) => return conn.drop(),
+			Err(e) => return Err(e),
 			Ok(true) => (),
 			Ok(false) => {
 				if req.kind() == RequestKind::Wrq {
 					let wrq_ack = pkt::MutableTftpAck::new(0);
-					conn.send_packet(&wrq_ack);
+					conn.send_packet(&wrq_ack)?;
 				}
 			}
 		};
@@ -140,19 +144,21 @@ impl TftpServer {
 	
 		info!("{:?} from {}", req.kind(), conn.peer());
 		match req.kind() {
-			tftp::RequestKind::Rrq => tftp::send_data(conn, file).await,
-			tftp::RequestKind::Wrq => tftp::receive_data(conn, file, None).await,
+			tftp::RequestKind::Rrq => tftp::send_data(conn, file).await?,
+			tftp::RequestKind::Wrq => tftp::receive_data(conn, file, None).await?,
 		};
+		Ok(())
 	}
 }
 
-pub async fn run_server(listen_addr: SocketAddr, cxl_token: CancellationToken) -> Result<(), String> {
+pub async fn run_server(listen_addr: SocketAddr, cxl_token: CancellationToken) {
 	let socket = UdpSocket::bind(listen_addr).unwrap();
 	socket.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
 
 	loop {
 		if cxl_token.is_cancelled() {
-			break Ok(());
+
+			break;
 		}
 
 		/* this buffer will be moved into the task below */
@@ -168,7 +174,7 @@ pub async fn run_server(listen_addr: SocketAddr, cxl_token: CancellationToken) -
 					};
 					TftpServer
 						::new(listen_addr.ip(), task_cxl_token)
-						.handle_request(packet, client).await;
+						.handle_request(packet, client).await.unwrap();
 				});
 			},
 			Err(e) => {

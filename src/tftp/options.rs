@@ -2,14 +2,7 @@ use std::time::Duration;
 use std::collections::HashMap;
 
 use crate::tftp::consts;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum OptionError {
-	InvalidOption,
-	UnsupportedOption,
-	UnexpectedValue,
-	NoAck,
-}
+use crate::tftp::error::OptionError;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TftpOptionKind {
@@ -41,25 +34,29 @@ impl TftpOption {
 	}
 }
 
-pub fn parse_tftp_options(raw_opts: HashMap<&str, &str>) -> Result<Vec<TftpOption>, ()> {
+///
+/// This skips unknown options but returns an error in case a known option
+/// has an invalid value.
+/// 
+pub fn parse_tftp_options(raw_opts: HashMap<&str, &str>) -> Result<Vec<TftpOption>, OptionError> {
 	let mut res: Vec<TftpOption> = Vec::with_capacity(3);
 
 	if let Some(val) = raw_opts.get(consts::OPT_BLOCKSIZE_IDENT) {
 		if let Ok(size) = u16::from_str_radix(*val, 10) {
 			res.push(TftpOption::Blocksize(size));
-		} else { return Err(()); }
+		} else { return Err(OptionError::InvalidOption); }
 	}
 
 	if let Some(val) = raw_opts.get(consts::OPT_TIMEOUT_IDENT) {
 		if let Ok(timeout) = u8::from_str_radix(*val, 10) {
 			res.push(TftpOption::Timeout(Duration::from_secs(timeout as u64)));
-		} else { return Err(()); }
+		} else { return Err(OptionError::InvalidOption); }
 	}
 
 	if let Some(val) = raw_opts.get(consts::OPT_TRANSFERSIZE_IDENT) {
 		if let Ok(tf_size) = u32::from_str_radix(*val, 10) {
 			res.push(TftpOption::TransferSize(tf_size));
-		} else { return Err(()); }
+		} else { return Err(OptionError::InvalidOption); }
 	}
 
 	Ok(res)
