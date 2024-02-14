@@ -147,8 +147,8 @@ impl TftpServer {
 	
 		info!("{:?} from {}", req.kind(), conn.peer());
 		match req.kind() {
-			tftp::RequestKind::Rrq => tftp::send_data(conn, file).await?,
-			tftp::RequestKind::Wrq => tftp::receive_data(conn, file, None).await?,
+			tftp::RequestKind::Rrq => conn.send_data(file).await?,
+			tftp::RequestKind::Wrq => conn.receive_data(file, None).await?,
 		};
 		Ok(())
 	}

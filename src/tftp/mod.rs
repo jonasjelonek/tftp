@@ -265,97 +265,97 @@ impl TftpConnection {
 		error!("Tftp error: code {}; '{}'", code, msg);
 		Ok(())
 	}
-}
 
-pub async fn receive_data<'a>(conn: TftpConnection, stream: impl Write, init_data: Option<pkt::TftpData<'a>>) -> Result<()> {
-	let mut buf_write = BufWriter::new(stream);
-	let blocksize = conn.opt_blocksize();
-	let mut blocknum: u16 = 0;
-	let mut data_buf: Vec<u8> = vec![0; 4 + (blocksize as usize)];
-
-	if let Some(first) = init_data {
-		buf_write.write_all(first.data())?;
-		blocknum += 1;
-		
-		let ack_pkt = pkt::MutableTftpAck::new(blocknum);
-		conn.send_packet(&ack_pkt)?;
-		if first.data_len() < (blocksize as usize) {
-			return Ok(());
+	pub async fn receive_data<'a>(&self, stream: impl Write, init_data: Option<pkt::TftpData<'a>>) -> Result<()> {
+		let mut buf_write = BufWriter::new(stream);
+		let blocksize = self.opt_blocksize();
+		let mut blocknum: u16 = 0;
+		let mut data_buf: Vec<u8> = vec![0; 4 + (blocksize as usize)];
+	
+		if let Some(first) = init_data {
+			buf_write.write_all(first.data())?;
+			blocknum += 1;
+			
+			let ack_pkt = pkt::MutableTftpAck::new(blocknum);
+			self.send_packet(&ack_pkt)?;
+			if first.data_len() < (blocksize as usize) {
+				return Ok(());
+			}
 		}
+	
+		loop {
+			if self.host_cancelled() {
+				return Err(ConnectionError::Cancelled)
+			}
+	
+			let pkt = match self.receive_packet(&mut data_buf[..]) {
+				Ok(pkt::TftpPacket::Data(data)) => data,
+				Ok(pkt::TftpPacket::Err(error)) => return Err(ConnectionError::PeerError(error.into())),
+				Ok(_) => return Err(ConnectionError::UnexpectedPacket),
+				Err(e) => return Err(e),
+			};
+			if pkt.blocknum() != blocknum.wrapping_add(1) {
+				continue;
+			}
+	
+			buf_write.write_all(pkt.data())?;
+			blocknum = blocknum.wrapping_add(1);
+			
+			let ack_pkt = packet::MutableTftpAck::new(blocknum);
+			self.send_packet(&ack_pkt)?;
+			if pkt.data_len() < (blocksize as usize) {
+				break;
+			}
+		}
+	
+		buf_write.flush().ok();
+		debug!("received data");
+		Ok(())
 	}
 
-	loop {
-		if conn.host_cancelled() {
-			return Err(ConnectionError::Cancelled)
+	///
+	/// send_data
+	/// 
+	/// This is used for RRQ in server mode and WRQ in client mode
+	pub async fn send_data(&self, stream: impl Read) -> Result<()> {
+		if self.tx_mode() == Mode::NetAscii {
+			self.send_error(ErrorCode::IllegalOperation, "NetAscii mode not supported").ok();
+			return Err(ConnectionError::UnsupportedTxMode);
 		}
 
-		let pkt = match conn.receive_packet(&mut data_buf[..]) {
-			Ok(pkt::TftpPacket::Data(data)) => data,
-			Ok(pkt::TftpPacket::Err(error)) => return Err(ConnectionError::PeerError(error.into())),
-			Ok(_) => return Err(ConnectionError::UnexpectedPacket),
-			Err(e) => return Err(e),
-		};
-		if pkt.blocknum() != blocknum.wrapping_add(1) {
-			continue;
+		let blocksize = self.opt_blocksize();
+		let mut buf_read = BufReader::new(stream);
+		//debug!("start sending file");
+
+		/* Use only one buffer for file read and packet send. The first 4 bytes are always reserved
+		* for packet header and the file is read after that. */
+		let mut read_buf: Vec<u8> = Vec::with_capacity(4 + (blocksize as usize));
+		let mut sent_blocks: usize = 0;
+		let mut blocknum: u16 = 0;
+
+		read_buf.extend([0; 4]);
+		loop {
+			if self.host_cancelled() {
+				return Err(ConnectionError::Cancelled);
+			}
+
+			let bytes_available = buf_read.by_ref().take(blocksize as u64).read_to_end(&mut read_buf)?;
+			let mut pkt = packet::MutableTftpData::from(&mut read_buf[..]);
+			
+			blocknum = blocknum.wrapping_add(1);
+			pkt.set_blocknum(blocknum as u16);
+			
+			self.send_and_receive_ack(&pkt)?;
+
+			sent_blocks += 1;
+			if bytes_available < (blocksize as usize) {
+				/* Stop if this was the last block */
+				break;
+			}
+			read_buf.truncate(4);
 		}
 
-		buf_write.write_all(pkt.data())?;
-		blocknum = blocknum.wrapping_add(1);
-		
-		let ack_pkt = packet::MutableTftpAck::new(blocknum);
-		conn.send_packet(&ack_pkt)?;
-		if pkt.data_len() < (blocksize as usize) {
-			break;
-		}
+		debug!("sent file in {} blocks", sent_blocks);
+		Ok(())
 	}
-
-	buf_write.flush().ok();
-	debug!("received data");
-	Ok(())
-}
-
-///
-/// send_data
-/// 
-/// This can be used for RRQ in server mode and WRQ in client mode
-pub async fn send_data(conn: TftpConnection, stream: impl Read) -> Result<()> {
-	if conn.tx_mode() == Mode::NetAscii {
-		conn.send_error(ErrorCode::IllegalOperation, "NetAscii mode not supported").ok();
-		return Err(ConnectionError::UnsupportedTxMode);
-	}
-
-	let blocksize = conn.opt_blocksize();
-	let mut buf_read = BufReader::new(stream);
-	//debug!("start sending file");
-
-	/* Use only one buffer for file read and packet send. The first 4 bytes are always reserved
-	 * for packet header and the file is read after that. */
-	let mut read_buf: Vec<u8> = Vec::with_capacity(4 + (blocksize as usize));
-	let mut sent_blocks: usize = 0;
-	let mut blocknum: u16 = 0;
-
-	read_buf.extend([0; 4]);
-	loop {
-		if conn.host_cancelled() {
-			return Err(ConnectionError::Cancelled);
-		}
-
-		let bytes_available = buf_read.by_ref().take(blocksize as u64).read_to_end(&mut read_buf)?;
-		let mut pkt = packet::MutableTftpData::from(&mut read_buf[..]);
-		
-		blocknum = blocknum.wrapping_add(1);
-		pkt.set_blocknum(blocknum as u16);
-		
-		conn.send_and_receive_ack(&pkt)?;
-
-		sent_blocks += 1;
-		if bytes_available < (blocksize as usize) {
-			/* Stop if this was the last block */
-			break;
-		}
-		read_buf.truncate(4);
-	}
-
-	debug!("sent file in {} blocks", sent_blocks);
-	Ok(())
 }

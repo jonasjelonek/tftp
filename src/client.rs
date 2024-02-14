@@ -94,7 +94,7 @@ impl TftpClient {
 			TftpPacket::Data(data) => init_data = Some(data),
 			_ => return Err(ConnectionError::UnexpectedPacket.into()),
 		}
-		tftp::receive_data(conn, file, init_data).await?;
+		conn.receive_data(file, init_data).await?;
 		Ok(())
 	}
 
@@ -139,7 +139,7 @@ impl TftpClient {
 			_ => return Err(ConnectionError::UnexpectedPacket.into())
 		}
 		
-		tftp::send_data(conn, file).await?;
+		conn.send_data(file).await?;
 		Ok(())
 	}
 }
