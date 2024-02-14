@@ -74,34 +74,27 @@ impl TftpClient {
 		 * not be done in TftpConnection's receive functions.
 		 * In case we requested options, we need to handle the first packet anyway. */
 		let mut buf = [0u8; 4 + tftp::consts::DEFAULT_BLOCK_SIZE as usize];
-		match conn.receive_packet_from(&mut buf, None) {
-			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::OAck => {
-				if remote.ip() != server.ip() {
-					return Err(RequestError::UnknownPeer);
-				}
-				conn.connect_to(remote)?;
+		let (pkt, remote) = conn.receive_packet_from(&mut buf)?;
 
-				let TftpPacket::OAck(oack) = pkt else { unreachable!() };
+		// Fail if another IP is used
+		if remote.ip() != server.ip() {
+			return Err(RequestError::UnknownPeer);
+		}
+		conn.connect_to(remote)?;
+
+		let mut init_data: Option<_> = None;
+		match pkt {
+			TftpPacket::OAck(oack) => {
 				let opts = tftp::options::parse_tftp_options(oack.options().unwrap()).unwrap();
 				conn.set_options(&opts[..]);
 
 				let ack_pkt = tftp::packet::MutableTftpAck::new(0);
 				conn.send_packet(&ack_pkt)?;
-
-				tftp::receive_data(conn, file, None).await?;
 			},
-			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::Data => {
-				if remote.ip() != server.ip() {
-					return Err(RequestError::UnknownPeer);
-				}
-				conn.connect_to(remote)?;
-
-				let TftpPacket::Data(data) = pkt else { unreachable!() };
-				tftp::receive_data(conn, file, Some(data)).await?
-			},
-			Ok((_pkt, _)) => return Err(ConnectionError::UnexpectedPacket.into()),
-			Err(e) => return Err(RequestError::ConnectionError(e)),
-		};
+			TftpPacket::Data(data) => init_data = Some(data),
+			_ => return Err(ConnectionError::UnexpectedPacket.into()),
+		}
+		tftp::receive_data(conn, file, init_data).await?;
 		Ok(())
 	}
 
@@ -116,7 +109,7 @@ impl TftpClient {
 
 		let mut builder = TftpReqBuilder::new()
 			.kind(RequestKind::Wrq)
-			.mode(Mode::Octet)
+			.mode(Mode::Octet) // we only support octet mode
 			.filename(&filename);
 
 		let mut options = options.to_owned();
@@ -130,29 +123,23 @@ impl TftpClient {
 		conn.send_request_to(&pkt, server)?;
 
 		let mut buf = [0u8; 64];
-		match conn.receive_packet_from(&mut buf, None) {
-			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::OAck => {
-				if remote.ip() != server.ip() {
-					return Err(RequestError::UnknownPeer);
-				}
-				conn.connect_to(remote).unwrap();
+		let (pkt, remote) = conn.receive_packet_from(&mut buf)?;
+		
+		if remote.ip() != server.ip() {
+			return Err(RequestError::UnknownPeer);
+		}
+		conn.connect_to(remote).unwrap();
 
-				let TftpPacket::OAck(oack) = pkt else { unreachable!() };
+		match pkt {
+			TftpPacket::OAck(oack) => {
 				let opts = tftp::options::parse_tftp_options(oack.options().unwrap()).unwrap();
 				conn.set_options(&opts[..]);
-
-				tftp::send_data(conn, file).await?;
 			},
-			Ok((pkt, remote)) if pkt.packet_kind() == PacketKind::Ack => {
-				if remote.ip() != server.ip() {
-					return Err(RequestError::UnknownPeer);
-				}
-				conn.connect_to(remote).unwrap();
-				tftp::send_data(conn, file).await?
-			},
-			Ok((pkt, _)) => return Err(ConnectionError::UnexpectedPacket.into()),
-			Err(e) => return Err(RequestError::ConnectionError(e)),
+			TftpPacket::Ack(_) => (),
+			_ => return Err(ConnectionError::UnexpectedPacket.into())
 		}
+		
+		tftp::send_data(conn, file).await?;
 		Ok(())
 	}
 }

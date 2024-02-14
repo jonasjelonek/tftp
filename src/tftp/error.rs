@@ -33,6 +33,8 @@ pub enum ConnectionError {
 	UnknownTid,
 	#[error("peer requested an unsupported transfer mode")]
 	UnsupportedTxMode,
+	#[error("")]
+	PeerError(#[from] TftpError),
 	#[error("response is invalid: {0}")]
 	InvalidResponse(#[from] ParseError),
 	#[error("input/output error: {0}")]
@@ -113,6 +115,25 @@ impl TryFrom<u16> for ErrorCode {
 			7 => Ok(Self::NoSuchUser),
 			8 => Ok(Self::InvalidOption),
 			_ => Err(ParseError::MalformedPacket)
+		}
+	}
+}
+
+#[derive(Debug, Error)]
+pub struct TftpError {
+	code: ErrorCode,
+	msg: Box<str>
+}
+impl Display for TftpError {
+	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+		write!(f, "{};{}", self.code, self.msg)
+	}
+}
+impl<'a> From<crate::tftp::packet::TftpError<'a>> for TftpError {
+	fn from(value: crate::tftp::packet::TftpError) -> Self {
+		TftpError { 
+			code: value.error_code(),
+			msg: value.error_msg().into()
 		}
 	}
 }

@@ -68,8 +68,11 @@ impl TftpServer {
 		if req_kind == RequestKind::Rrq {
 			let mut buf: [u8; 16] = [0; 16];
 
-			conn.receive_packet(&mut buf[..], Some(pkt::PacketKind::Ack))
-				.map_err(|_| OptionError::NoAck)?;
+			match conn.receive_packet(&mut buf[..]) {
+				Ok(pkt::TftpPacket::Ack(_)) => (),
+				Ok(_) => return Err(OptionError::NoAck.into()),
+				Err(e) => return Err(e.into())
+			}
 		}
 		
 		conn.set_options(&requested_options[..]);

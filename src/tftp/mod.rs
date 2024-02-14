@@ -38,12 +38,8 @@ pub mod consts {
 	pub const EMPTY_CHUNK: &[u8] = &[];
 }
 
-use crate::tftp::{
-	packet::builder::TftpErrorBuilder,
-	packet::Packet,
-	error::ErrorCode,
-	error::{ConnectionError, ParseError},
-};
+use crate::tftp::packet::{self as pkt, builder::TftpErrorBuilder, Packet};
+use crate::tftp::error::{ConnectionError, ErrorCode, ParseError};
 use options::*;
 
 
@@ -163,30 +159,25 @@ impl TftpConnection {
 	// ###### ACTIONS #########################################################
 	// ########################################################################
 
-	pub fn receive_packet_from<'a>(&self, buf: &'a mut [u8], expect: Option<packet::PacketKind>) -> Result<(packet::TftpPacket<'a>, SocketAddr)> {
+	pub fn receive_packet_from<'a>(&self, buf: &'a mut [u8]) -> Result<(packet::TftpPacket<'a>, SocketAddr)> {
 		let pkt: packet::TftpPacket;
 		
 		match self.socket.recv_from(buf) {
 			Ok((len, tx)) => {
 				pkt = packet::TftpPacket::try_from_buf(&buf[..len])?;
-
-				if let Some(exp_kind) = expect && pkt.packet_kind() != exp_kind {
-					return Err(ConnectionError::UnexpectedPacket);
-				} else {
-					return Ok((pkt, tx));
-				}
+				Ok((pkt, tx))
 			}, 
 			Err(e) => {
 				match e.kind() {
-					io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => return Err(ConnectionError::Timeout),
-					_ => return Err(e.into()),
+					io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut => Err(ConnectionError::Timeout),
+					_ => Err(e.into()),
 				}
 			},
 		}
 	}
 
-	pub fn receive_packet<'a>(&self, buf: &'a mut [u8], expect: Option<packet::PacketKind>) -> Result<packet::TftpPacket<'a>> {
-		let recv = self.receive_packet_from(buf, expect)?;
+	pub fn receive_packet<'a>(&self, buf: &'a mut [u8]) -> Result<packet::TftpPacket<'a>> {
+		let recv = self.receive_packet_from(buf)?;
 		if let Ok(peer) = self.socket.peer_addr() && peer != recv.1 { /* IP and port must be the same for whole connection */
 			self.send_error(ErrorCode::UnknownTid, "").ok();
 			return Err(ConnectionError::UnknownTid);
@@ -203,7 +194,7 @@ impl TftpConnection {
 		Ok(self.socket.send(pkt.as_bytes()).map(|_| ())?)
 	}
 
-	pub fn send_and_receive_ack<'a>(&self, data_pkt: &packet::MutableTftpData) -> Result<()> {
+	pub fn send_and_receive_ack<'a>(&self, data_pkt: &pkt::MutableTftpData) -> Result<()> {
 		let mut attempts: u8 = 0;
 		let mut buf: [u8; 16] = [0; 16];
 		loop {
@@ -212,14 +203,15 @@ impl TftpConnection {
 			}
 
 			self.send_packet(data_pkt)?;
-			match self.receive_packet(&mut buf, Some(packet::PacketKind::Ack)) {
-				Ok(reply) => {
-					let packet::TftpPacket::Ack(ack) = reply else { panic!() };
+			match self.receive_packet(&mut buf) {
+				Ok(pkt::TftpPacket::Ack(ack)) => {
 					if ack.blocknum() != data_pkt.blocknum() {
 						return Err(ConnectionError::UnexpectedBlockAck);
 					}
 					return Ok(())
 				},
+				Ok(pkt::TftpPacket::Err(error)) => return Err(ConnectionError::PeerError(error.into())),
+				Ok(pkt) => return Err(ConnectionError::UnexpectedPacket),
 				Err(e) => {
 					if attempts > consts::DEFAULT_RETRANSMIT_ATTEMPTS {
 						return Err(e);
@@ -275,7 +267,7 @@ impl TftpConnection {
 	}
 }
 
-pub async fn receive_data<'a>(conn: TftpConnection, stream: impl Write, init_data: Option<packet::TftpData<'a>>) -> Result<()> {
+pub async fn receive_data<'a>(conn: TftpConnection, stream: impl Write, init_data: Option<pkt::TftpData<'a>>) -> Result<()> {
 	let mut buf_write = BufWriter::new(stream);
 	let blocksize = conn.opt_blocksize();
 	let mut blocknum: u16 = 0;
@@ -285,7 +277,7 @@ pub async fn receive_data<'a>(conn: TftpConnection, stream: impl Write, init_dat
 		buf_write.write_all(first.data())?;
 		blocknum += 1;
 		
-		let ack_pkt = packet::MutableTftpAck::new(blocknum);
+		let ack_pkt = pkt::MutableTftpAck::new(blocknum);
 		conn.send_packet(&ack_pkt)?;
 		if first.data_len() < (blocksize as usize) {
 			return Ok(());
@@ -297,8 +289,12 @@ pub async fn receive_data<'a>(conn: TftpConnection, stream: impl Write, init_dat
 			return Err(ConnectionError::Cancelled)
 		}
 
-		let pkt = conn.receive_packet(&mut data_buf[..], Some(packet::PacketKind::Data))?;
-		let packet::TftpPacket::Data(pkt) = pkt else { unreachable!() };
+		let pkt = match conn.receive_packet(&mut data_buf[..]) {
+			Ok(pkt::TftpPacket::Data(data)) => data,
+			Ok(pkt::TftpPacket::Err(error)) => return Err(ConnectionError::PeerError(error.into())),
+			Ok(_) => return Err(ConnectionError::UnexpectedPacket),
+			Err(e) => return Err(e),
+		};
 		if pkt.blocknum() != blocknum.wrapping_add(1) {
 			continue;
 		}
