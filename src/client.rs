@@ -147,7 +147,7 @@ impl TftpClient {
 				if remote.ip() != server.ip() {
 					return Err(RequestError::UnknownPeer);
 				}
-				conn.connect_to(server).unwrap();
+				conn.connect_to(remote).unwrap();
 				tftp::send_data(conn, file).await?
 			},
 			Ok((pkt, _)) => return Err(ConnectionError::UnexpectedPacket.into()),
