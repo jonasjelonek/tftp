@@ -160,7 +160,7 @@ pub async fn run_server(listen_addr: SocketAddr, cxl_token: CancellationToken) {
 
 	loop {
 		if cxl_token.is_cancelled() {
-
+			warn!("Server task cancelled by signal");
 			break;
 		}
 

@@ -196,7 +196,7 @@ impl TftpConnection {
 
 	pub fn send_and_receive_ack<'a>(&self, data_pkt: &pkt::MutableTftpData) -> Result<()> {
 		let mut attempts: u8 = 0;
-		let mut buf: [u8; 16] = [0; 16];
+		let mut buf: [u8; 32] = [0; 32];
 		loop {
 			if self.host_cancelled() {
 				return Err(ConnectionError::Cancelled);
@@ -211,7 +211,7 @@ impl TftpConnection {
 					return Ok(())
 				},
 				Ok(pkt::TftpPacket::Err(error)) => return Err(ConnectionError::PeerError(error.into())),
-				Ok(pkt) => return Err(ConnectionError::UnexpectedPacket),
+				Ok(_) => return Err(ConnectionError::UnexpectedPacket),
 				Err(e) => {
 					if attempts > consts::DEFAULT_RETRANSMIT_ATTEMPTS {
 						return Err(e);
@@ -341,7 +341,7 @@ pub async fn send_data(conn: TftpConnection, stream: impl Read) -> Result<()> {
 		}
 
 		let bytes_available = buf_read.by_ref().take(blocksize as u64).read_to_end(&mut read_buf)?;
-		let mut pkt = packet::MutableTftpData::try_from(&mut read_buf[..], true).unwrap();
+		let mut pkt = packet::MutableTftpData::from(&mut read_buf[..]);
 		
 		blocknum = blocknum.wrapping_add(1);
 		pkt.set_blocknum(blocknum as u16);

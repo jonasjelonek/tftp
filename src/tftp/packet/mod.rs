@@ -509,24 +509,6 @@ impl AsMut<[u8]> for MutablePacketBuf<'_> {
 	}
 }
 
-/* pub struct MutableTftpReq<'a> {
-	buf: MutablePacketBuf<'a>,
-}
-impl<'a> MutableTftpReq<'a> {
-	pub fn buf_as_slice(&'a self) -> &'a [u8] {
-		match self.buf {
-			MutablePacketBuf::Borrowed(ref b) => *b,
-			MutablePacketBuf::Owned(ref b) => (*b).as_slice(),
-		}
-	}
-	pub fn buf_as_slice_mut(&'a mut self) -> &'a mut [u8] {
-		match self.buf {
-			MutablePacketBuf::Borrowed(ref mut b) => *b,
-			MutablePacketBuf::Owned(ref mut b) => (*b).as_mut_slice(),
-		}
-	}
-} */
-
 pub struct MutableTftpData<'a> { 
 	buf: MutablePacketBuf<'a>,
 	len: usize,
@@ -545,18 +527,20 @@ impl<'a> MutableTftpData<'a> {
 		}
 	}
 
-	pub fn try_from(buf: &'a mut [u8], is_filled: bool) -> Result<Self> {
+	/// 
+	/// This will panic if the buffer is too small!
+	/// 
+	pub fn from(buf: &'a mut [u8]) -> Self {
 		if buf.len() < 4 {
-			return Err(ParseError::UnexpectedEof);
+			panic!("Buffer too small for TFTP data packet!")
 		}
 
 		buf[0..=1].copy_from_slice(&consts::OPCODE_DATA.to_be_bytes());
 
-		let buf_len = buf.len();
-		Ok(Self { 
+		Self {
+			len: buf.len(),
 			buf: MutablePacketBuf::Borrowed(buf),
-			len: if is_filled { buf_len } else { 4 }
-		})
+		}
 	}
 
 	/// 
@@ -636,43 +620,6 @@ impl Packet for MutableTftpAck {
 	}
 }
 
-/* pub struct MutableTftpOAck { 
-	data: Vec<u8>,
-	n_options: u8,
-}
-impl MutableTftpOAck {
-	pub fn new() -> Self {
-		let opcode = super::consts::OPCODE_OACK.to_be_bytes();
-		Self { data: vec![ opcode[0], opcode[1] ], n_options: 0 }
-	}
-
-	pub fn with_capacity(capacity: usize) -> Self {
-		let mut data: Vec<u8> = Vec::with_capacity(capacity);
-		data.extend(super::consts::OPCODE_OACK.to_be_bytes());
-
-		Self { data, n_options: 0 }
-	}
-
-	pub fn from(mut buf: Vec<u8>) -> Self {
-		buf.resize(2, 0);
-		buf.copy_from_slice(&super::consts::OPCODE_OACK.to_be_bytes()[..]);
-		Self { data: buf, n_options: 0 }
-	}
-
-	pub fn add_option(&mut self, key: &str, val: &str) {
-		self.data.extend(key.as_bytes());
-		self.data.push(0);
-		self.data.extend(val.as_bytes());
-		self.data.push(0);
-		self.n_options += 1;
-	}
-
-	pub fn num_of_options(&self) -> u8 { self.n_options }
-	pub fn len(&self) -> usize { self.data.len() }
-	pub fn as_bytes(&self) -> &[u8] { &self.data[..] }
-} */
-
-
 pub struct MutableTftpError<'a> { 
 	buf: &'a mut [u8],
 	data_len: usize,
@@ -719,7 +666,6 @@ impl<'a> MutableTftpError<'a> {
 pub enum MutableTftpPacket<'a> {
 	Data(MutableTftpData<'a>),
 	Ack(MutableTftpAck),
-	//OAck(MutableTftpOAck),
 	Err(MutableTftpError<'a>),
 }
 impl<'a> MutableTftpPacket<'a> {
@@ -727,7 +673,6 @@ impl<'a> MutableTftpPacket<'a> {
 		match self {
 			Self::Data(p) => p.as_bytes(),
 			Self::Err(p) => p.as_bytes(),
-			//Self::OAck(p) => p.as_bytes(),
 			Self::Ack(p) => p.as_bytes(),
 		}
 	}
