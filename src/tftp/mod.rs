@@ -35,11 +35,21 @@ pub mod consts {
 	pub const OPCODE_ERROR: u16 = 5;
 	pub const OPCODE_OACK: u16 = 6;
 
+	pub const ERR_NOTDEFINED: u16 = 0;
+	pub const ERR_FILENOTFOUND: u16 = 1;
+	pub const ERR_ACCESSVIOLATION: u16 = 2;
+	pub const ERR_STORAGEERROR: u16 = 3;
+	pub const ERR_ILLEGALOPERATION: u16 = 4;
+	pub const ERR_UNKNOWNTID: u16 = 5;
+	pub const ERR_FILEEXISTS: u16 = 6;
+	pub const ERR_NOSUCHUSER: u16 = 7;
+	pub const ERR_INVALIDOPTION: u16 = 8;
+
 	pub const EMPTY_CHUNK: &[u8] = &[];
 }
 
-use crate::tftp::packet::{self as pkt, builder::TftpErrorBuilder, Packet};
-use crate::tftp::error::{ConnectionError, ErrorCode, ParseError};
+use packet::{self as pkt, builder::TftpErrorBuilder, Packet};
+use error::{ConnectionError, ErrorCode, ParseError};
 use options::*;
 
 
@@ -131,17 +141,20 @@ impl TftpConnection {
 	// ###### SETTER ##########################################################
 	// ########################################################################
 
-	pub fn connect_to(&self, to: SocketAddr) -> Result<()> {
-		Ok(self.socket.connect(to)?)
-	}
-
 	pub fn set_reply_timeout(&mut self, timeout: Duration) {
 		self.socket.set_nonblocking(false).unwrap();
 		self.socket.set_read_timeout(Some(timeout)).unwrap();
 		debug!("Timeout set to {}ms", timeout.as_millis());
 	}
 
-	pub fn set_tx_mode(&mut self, tx_mode: Mode) { self.tx_mode = tx_mode }
+	pub fn set_tx_mode(&mut self, tx_mode: Mode) -> Result<()> {
+		if tx_mode != Mode::Octet {
+			self.send_error(ErrorCode::IllegalOperation, "NetAscii mode not supported").ok();
+			return Err(ConnectionError::UnsupportedTxMode);
+		}
+		self.tx_mode = tx_mode;
+		Ok(())
+	}
 
 	pub fn set_options(&mut self, opts: &[TftpOption]) {
 		for opt in opts {
@@ -158,6 +171,10 @@ impl TftpConnection {
 	// ########################################################################
 	// ###### ACTIONS #########################################################
 	// ########################################################################
+
+	pub fn connect_to(&self, to: SocketAddr) -> Result<()> {
+		Ok(self.socket.connect(to)?)
+	}
 
 	pub fn receive_packet_from<'a>(&self, buf: &'a mut [u8]) -> Result<(packet::TftpPacket<'a>, SocketAddr)> {
 		let pkt: packet::TftpPacket;
@@ -266,6 +283,10 @@ impl TftpConnection {
 		Ok(())
 	}
 
+	///
+	/// receive_data
+	/// 
+	/// This is used for RRQ in client mode and WRQ in server mode
 	pub async fn receive_data<'a>(&self, stream: impl Write, init_data: Option<pkt::TftpData<'a>>) -> Result<()> {
 		let mut buf_write = BufWriter::new(stream);
 		let blocksize = self.opt_blocksize();
@@ -318,17 +339,12 @@ impl TftpConnection {
 	/// 
 	/// This is used for RRQ in server mode and WRQ in client mode
 	pub async fn send_data(&self, stream: impl Read) -> Result<()> {
-		if self.tx_mode() == Mode::NetAscii {
-			self.send_error(ErrorCode::IllegalOperation, "NetAscii mode not supported").ok();
-			return Err(ConnectionError::UnsupportedTxMode);
-		}
-
 		let blocksize = self.opt_blocksize();
 		let mut buf_read = BufReader::new(stream);
 		//debug!("start sending file");
 
 		/* Use only one buffer for file read and packet send. The first 4 bytes are always reserved
-		* for packet header and the file is read after that. */
+		 * for packet header and the file is read after that. */
 		let mut read_buf: Vec<u8> = Vec::with_capacity(4 + (blocksize as usize));
 		let mut sent_blocks: usize = 0;
 		let mut blocknum: u16 = 0;

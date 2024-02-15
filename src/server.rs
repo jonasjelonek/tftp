@@ -9,8 +9,8 @@ use tokio_util::sync::CancellationToken;
 #[allow(unused)]
 use log::{info, warn, error, debug, trace};
 
-use crate::tftp::error::{ConnectionError, ErrorCode, OptionError, RequestError};
-use crate::tftp::{self, Mode, RequestKind, TftpConnection};
+use crate::tftp::error::{ErrorCode, OptionError, RequestError};
+use crate::tftp::{RequestKind, TftpConnection};
 use crate::tftp::options::{parse_tftp_options, TftpOption, TftpOptionKind};
 use crate::tftp::packet as pkt;
 
@@ -87,11 +87,7 @@ impl TftpServer {
 		conn.connect_to(client)?;
 
 		match req.mode() {
-			Ok(mode) if mode == Mode::Octet => (),
-			Ok(_) => {
-				conn.send_error(ErrorCode::NotDefined, "Unsupported transfer mode").ok();
-				return Err(ConnectionError::UnsupportedTxMode.into());
-			}, 
+			Ok(mode) => conn.set_tx_mode(mode)?, 
 			Err(_) => {
 				conn.send_error(ErrorCode::NotDefined, "Malformed request; invalid mode").ok();
 				return Err(RequestError::MalformedRequest);
@@ -132,23 +128,18 @@ impl TftpServer {
 		};
 
 		/* Read, parse and acknowledge/reject options requested by the client. */
-		match self.negotiate_options(&mut conn, req.options().unwrap(), file_len, req.kind()).await {
-			Err(e) => return Err(e),
-			Ok(true) => (),
-			Ok(false) => {
-				if req.kind() == RequestKind::Wrq {
-					let wrq_ack = pkt::MutableTftpAck::new(0);
-					conn.send_packet(&wrq_ack)?;
-				}
+		if self.negotiate_options(&mut conn, req.options().unwrap(), file_len, req.kind()).await? == false {
+			if req.kind() == RequestKind::Wrq {
+				let wrq_ack = pkt::MutableTftpAck::new(0);
+				conn.send_packet(&wrq_ack)?;
 			}
-		};
-		conn.set_reply_timeout(conn.opt_timeout());
-		conn.set_tx_mode(req.mode().unwrap());
+			conn.set_reply_timeout(conn.opt_timeout());
+		}
 	
 		info!("{:?} from {}", req.kind(), conn.peer());
 		match req.kind() {
-			tftp::RequestKind::Rrq => conn.send_data(file).await?,
-			tftp::RequestKind::Wrq => conn.receive_data(file, None).await?,
+			RequestKind::Rrq => conn.send_data(file).await?,
+			RequestKind::Wrq => conn.receive_data(file, None).await?,
 		};
 		Ok(())
 	}

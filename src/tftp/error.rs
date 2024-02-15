@@ -1,6 +1,8 @@
 use std::fmt::Display;
 use thiserror::Error;
 
+use crate::tftp::consts;
+
 #[derive(Debug, Error)]
 pub enum RequestError {
 	#[error("received response from an unknown peer")]
@@ -43,11 +45,11 @@ pub enum ConnectionError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum ParseError {
-	#[error("")]
+	#[error("unexpected EOF")]
 	UnexpectedEof,
-	#[error("")]
+	#[error("malformed packet")]
 	MalformedPacket,
-	#[error("")]
+	#[error("unexpected opcode while parsing packet")]
 	UnexpectedOpcode,
 	#[error("{0} is not valid opcode")]
 	InvalidOpcode(u16),
@@ -55,7 +57,7 @@ pub enum ParseError {
 	NotNullTerminated,
 	#[error("string contains non-ascii characters")]
 	NotAscii,
-	#[error("")]
+	#[error("unknown transfer mode")]
 	UnknownTxMode,
 }
 
@@ -72,28 +74,24 @@ impl From<std::str::Utf8Error> for ParseError {
 
 #[derive(Debug, Clone, Copy, PartialEq, Error)]
 pub enum OptionError {
-	#[error("")]
+	#[error("the option is invalid")]
 	InvalidOption,
-	#[error("")]
-	UnsupportedOption,
-	#[error("")]
-	UnexpectedValue,
-	#[error("")]
+	#[error("client didn't acknowledge options")]
 	NoAck,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[repr(u16)]
 pub enum ErrorCode {
-	NotDefined = 0,
-	FileNotFound = 1,
-	AccessViolation = 2,
-	StorageError = 3,
-	IllegalOperation = 4,
-	UnknownTid = 5,
-	FileExists = 6,
-	NoSuchUser = 7,
-	InvalidOption = 8,
+	NotDefined = consts::ERR_NOTDEFINED,
+	FileNotFound = consts::ERR_FILENOTFOUND,
+	AccessViolation = consts::ERR_ACCESSVIOLATION,
+	StorageError = consts::ERR_STORAGEERROR,
+	IllegalOperation = consts::ERR_ILLEGALOPERATION,
+	UnknownTid = consts::ERR_UNKNOWNTID,
+	FileExists = consts::ERR_FILEEXISTS,
+	NoSuchUser = consts::ERR_NOSUCHUSER,
+	InvalidOption = consts::ERR_INVALIDOPTION,
 }
 impl Display for ErrorCode {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -105,15 +103,15 @@ impl TryFrom<u16> for ErrorCode {
 
 	fn try_from(value: u16) -> Result<Self, Self::Error> {
 		match value {
-			0 => Ok(Self::NotDefined),
-			1 => Ok(Self::FileNotFound),
-			2 => Ok(Self::AccessViolation),
-			3 => Ok(Self::StorageError),
-			4 => Ok(Self::IllegalOperation),
-			5 => Ok(Self::UnknownTid),
-			6 => Ok(Self::FileExists),
-			7 => Ok(Self::NoSuchUser),
-			8 => Ok(Self::InvalidOption),
+			consts::ERR_NOTDEFINED => Ok(Self::NotDefined),
+			consts::ERR_FILENOTFOUND => Ok(Self::FileNotFound),
+			consts::ERR_ACCESSVIOLATION => Ok(Self::AccessViolation),
+			consts::ERR_STORAGEERROR => Ok(Self::StorageError),
+			consts::ERR_ILLEGALOPERATION => Ok(Self::IllegalOperation),
+			consts::ERR_UNKNOWNTID => Ok(Self::UnknownTid),
+			consts::ERR_FILEEXISTS => Ok(Self::FileExists),
+			consts::ERR_NOSUCHUSER => Ok(Self::NoSuchUser),
+			consts::ERR_INVALIDOPTION => Ok(Self::InvalidOption),
 			_ => Err(ParseError::MalformedPacket)
 		}
 	}
