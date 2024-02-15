@@ -9,9 +9,8 @@ use log::{info, warn, error, debug, trace};
 
 use crate::cli;
 use crate::tftp::options::{TftpOption, TftpOptionKind};
-use crate::tftp::{self, RequestKind, Mode, TftpConnection};
-use crate::tftp::packet::{PacketKind, TftpPacket};
-use crate::tftp::packet::builder::*;
+use crate::tftp::{self, Mode, RequestKind, TftpConnection};
+use crate::tftp::packet::{builder::*, TftpPacket};
 use crate::tftp::error::{ConnectionError, RequestError};
 
 pub type Result<T> = std::result::Result<T, RequestError>;
@@ -47,7 +46,9 @@ impl TftpClient {
 			RequestKind::Rrq => self.get(conn, req_params.server, req_params.file, req_params.options).await,
 			RequestKind::Wrq => self.put(conn, req_params.server, req_params.file, req_params.options).await,
 		};
-
+		if let Err(error) = result {
+			error!("Failed to perform request: {error}");
+		}
 	}
 
 	async fn get(&mut self, mut conn: TftpConnection, server: SocketAddr, file_path: PathBuf, options: &[TftpOption]) -> Result<()> {
