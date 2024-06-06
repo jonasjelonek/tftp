@@ -29,14 +29,17 @@ pub struct TftpClient {
 	options: Vec<TftpOption>,
 }
 impl TftpClient {
-	pub fn new(local_addr: IpAddr, cxl_token: CancellationToken) -> Self {
+	pub fn new(cxl_token: CancellationToken) -> Self {
 		Self {
-			local_addr,
+			local_addr: IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
 			cxl_token,
 			options: Vec::new()
 		}
 	}
 
+	pub fn set_local_addr(&mut self, addr: IpAddr) {
+		self.local_addr = addr
+	}
 	pub fn add_option(&mut self, option: &TftpOption) {
 		for x in 0..self.options.len() {
 			if self.options[x].kind() == option.kind() {
@@ -151,10 +154,9 @@ impl TftpClient {
 }
 
 pub async fn run_client(action: cli::ClientAction, opts: cli::ClientOpts, root: PathBuf, cxl_token: CancellationToken) -> Result<()> {
-	let local_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-	let mut client = TftpClient::new(local_addr, cxl_token);
+	let mut client = TftpClient::new(cxl_token);
 
-	let req_opts = action.get_opts();
+	let req_opts = action.options();
 	let mut file_path = root;
 	file_path.push(&req_opts.file.to_string_lossy()[..]);
 
@@ -163,7 +165,7 @@ pub async fn run_client(action: cli::ClientAction, opts: cli::ClientOpts, root: 
 		.for_each(|opt| client.add_option(opt));
 
 	let server = (req_opts.server, req_opts.port).into();
-	match action.as_req_kind() {
+	match action.as_request_kind() {
 		RequestKind::Rrq => client.get(file_path, server).await,
 		RequestKind::Wrq => client.put(file_path, server).await
 	}

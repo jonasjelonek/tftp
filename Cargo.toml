@@ -5,6 +5,11 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[features]
+default = ["client","server"]
+client = []
+server = []
+
 [dependencies]
 tokio = { version = "1.38", features = [ "full" ] }
 tokio-util = "0.7"

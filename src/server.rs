@@ -188,9 +188,11 @@ impl TftpServer {
 						let Ok(packet) = pkt::TftpReq::try_from(&recv_buf[..size]) else {
 							return error!("only TFTP requests accepted on this socket (client: {})", client);
 						};
-						let _ = TftpRequestHandler
+						TftpRequestHandler
 							::new(listen_addr, root_dir, task_cxl_token)
-							.handle_request(packet, client).await;
+							.handle_request(packet, client)
+							.await
+							.ok();
 					});
 				},
 				Err(e) => {

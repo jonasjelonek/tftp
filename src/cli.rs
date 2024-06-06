@@ -30,9 +30,7 @@ pub struct Options {
 pub enum DebugLevel {
 	Off = 0,
 	Error,
-
-	#[default]
-	Warn,
+	#[default] Warn,
 	Info,
 	Debug,
 	Trace
@@ -70,6 +68,7 @@ pub struct ClientOpts {
 
 #[derive(Subcommand, Debug)]
 pub enum RunMode {
+	#[cfg(feature = "server")]
 	Server {
 		#[arg(short, long, default_value_t = IpAddr::V4(Ipv4Addr::UNSPECIFIED))]
 		bind: IpAddr,
@@ -77,6 +76,7 @@ pub enum RunMode {
 		#[arg(short, long, default_value_t = crate::tftp::consts::TFTP_LISTEN_PORT)]
 		port: u16,
 	},
+	#[cfg(feature = "client")]
 	Client {
 		#[command(flatten)]
 		client_opts: ClientOpts,
@@ -112,14 +112,14 @@ pub enum ClientAction {
 	}
 }
 impl ClientAction {
-	pub fn as_req_kind(&self) -> tftp::RequestKind {
+	pub fn as_request_kind(self) -> tftp::RequestKind {
 		match self {
 			Self::Get { opts: _ } => tftp::RequestKind::Rrq,
 			Self::Put { opts: _ } => tftp::RequestKind::Wrq,
 		}
 	}
 
-	pub fn get_opts(&self) -> &ClientActionOpts {
+	pub fn options(&self) -> &ClientActionOpts {
 		match self {
 			Self::Get { opts } => opts,
 			Self::Put { opts } => opts,

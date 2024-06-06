@@ -2,16 +2,21 @@
 
 pub mod cli;
 pub mod tftp;
+#[cfg(feature = "server")]
 pub mod server;
+
+#[cfg(feature = "client")]
 pub mod client;
 
 use std::{error::Error, io, path::PathBuf};
 
 #[allow(unused)]
 use log::{info, warn, error, debug, trace};
-use server::TftpServer;
 use tokio_util::sync::CancellationToken;
 use clap::Parser;
+
+#[cfg(feature = "server")]
+use server::TftpServer;
 
 async fn run(opts: cli::Options) -> Result<(), Box<dyn Error>> {
 	/* Init our root directory */
@@ -20,11 +25,10 @@ async fn run(opts: cli::Options) -> Result<(), Box<dyn Error>> {
 			let root = PathBuf
 				::from(shellexpand::tilde(&rd.to_string_lossy()).as_ref())
 				.canonicalize()?;
-			if root.try_exists()? {
-				root
-			} else {
+			if !root.try_exists()? {
 				return Err(io::Error::from(io::ErrorKind::NotFound).into());
 			}
+			root
 		},
 		_ => std::env::current_dir()?,
 	};
@@ -41,11 +45,13 @@ async fn run(opts: cli::Options) -> Result<(), Box<dyn Error>> {
 	}).expect("Failed to install SIGINT handler");
 
 	match opts.run_mode {
+		#[cfg(feature = "server")]
 		cli::RunMode::Server { bind, port } => {
 			TftpServer::new((bind, port).into(), root_dir)?
 				.run(cancel_token)
 				.await?
 		},
+		#[cfg(feature = "client")]
 		cli::RunMode::Client { client_opts, action } => {
 			client::run_client(action, client_opts, root_dir, cancel_token).await?
 		},
