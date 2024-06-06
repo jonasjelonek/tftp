@@ -1,6 +1,8 @@
+use std::error::Error;
 use std::io;
 use std::net::{UdpSocket, SocketAddr, IpAddr};
 use std::fs::OpenOptions;
+use std::path::PathBuf;
 use std::time::Duration;
 use std::collections::HashMap;
 
@@ -20,21 +22,23 @@ use crate::tftp::packet as pkt;
 
 pub type Result<T> = std::result::Result<T, RequestError>;
 
-pub struct TftpServer {
+pub struct TftpRequestHandler {
 	listen_addr: IpAddr,
 	cancel_token: CancellationToken,
+	root: PathBuf,
 }
 
 // ############################################################################
 // ############################################################################
 // ############################################################################
 
-impl TftpServer {
+impl TftpRequestHandler {
 
-	pub fn new(local_ip: IpAddr, cancel_token: CancellationToken) -> Self {
-		TftpServer { 
+	pub fn new(local_ip: IpAddr, root: PathBuf, cancel_token: CancellationToken) -> Self {
+		TftpRequestHandler { 
 			listen_addr: local_ip,
 			cancel_token,
+			root
 		}
 	}
 
@@ -47,7 +51,7 @@ impl TftpServer {
 		if raw_opts.is_empty() {
 			return Ok(false);
 		}
-		
+
 		let mut requested_options = parse_tftp_options(raw_opts)?;
 
 		// Set transfer size if client requested it
@@ -94,7 +98,7 @@ impl TftpServer {
 			},
 		}
 	
-		let mut path = crate::working_dir().clone();
+		let mut path = self.root.clone();
 		let Ok(filename) = req.filename() else {
 			conn.send_error(ErrorCode::NotDefined, "Malformed request; missing filename").ok();
 			return Err(RequestError::MalformedRequest);
@@ -145,38 +149,53 @@ impl TftpServer {
 	}
 }
 
-pub async fn run_server(listen_addr: SocketAddr, cxl_token: CancellationToken) {
-	let socket = UdpSocket::bind(listen_addr).unwrap();
-	socket.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+pub struct TftpServer {
+	listen_addr: SocketAddr,
+	socket: UdpSocket,
+	root: PathBuf,
+}
+impl TftpServer {
 
-	loop {
-		if cxl_token.is_cancelled() {
-			warn!("Server task cancelled by signal");
-			break;
-		}
+	pub fn new(listen_addr: SocketAddr, root: PathBuf) -> std::result::Result<Self, Box<dyn Error>> {
+		let socket = UdpSocket::bind(listen_addr)?;
+		socket.set_read_timeout(Some(Duration::from_millis(500)))?;
 
-		/* this buffer will be moved into the task below */
-		let mut recv_buf = Box::new([0; 128]);
-		match socket.recv_from(recv_buf.as_mut()) {
-			Ok((size, client)) => {
-				debug!("received packet of size {} from {}", size, client);
+		Ok(Self { listen_addr, socket, root })
+	}
 
-				let task_cxl_token = cxl_token.clone();
-				tokio::spawn(async move {
-					let Ok(packet) = pkt::TftpReq::try_from(&recv_buf[..size]) else {
-						return error!("only TFTP requests accepted on this socket (client: {})", client);
-					};
-					TftpServer
-						::new(listen_addr.ip(), task_cxl_token)
-						.handle_request(packet, client).await.unwrap();
-				});
-			},
-			Err(e) => {
-				match e.kind() {
-					std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => (),
-					_ => error!("{}", e)
+	pub async fn run(&self, cxl_token: CancellationToken) -> Result<()> {
+		loop {
+			if cxl_token.is_cancelled() {
+				warn!("Server task cancelled by signal");
+				break;
+			}
+
+			/* this buffer will be moved into the task below */
+			let mut recv_buf = Box::new([0; 128]);
+			match self.socket.recv_from(recv_buf.as_mut()) {
+				Ok((size, client)) => {
+					debug!("received packet ({} bytes) from {}", size, client);
+	
+					let task_cxl_token = cxl_token.clone();
+					let listen_addr = self.listen_addr.ip();
+					let root_dir = self.root.clone();
+					tokio::spawn(async move {
+						let Ok(packet) = pkt::TftpReq::try_from(&recv_buf[..size]) else {
+							return error!("only TFTP requests accepted on this socket (client: {})", client);
+						};
+						let _ = TftpRequestHandler
+							::new(listen_addr, root_dir, task_cxl_token)
+							.handle_request(packet, client).await;
+					});
+				},
+				Err(e) => {
+					match e.kind() {
+						std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => (),
+						_ => error!("{}", e)
+					}
 				}
 			}
 		}
+		Ok(())
 	}
 }

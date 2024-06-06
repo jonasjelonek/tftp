@@ -26,7 +26,7 @@ pub struct Options {
 	pub run_mode: RunMode,
 }
 
-#[derive(Debug, Clone, ValueEnum, Default)]
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
 pub enum DebugLevel {
 	Off = 0,
 	Error,

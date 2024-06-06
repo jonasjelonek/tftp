@@ -134,7 +134,7 @@ impl TftpConnection {
 	#[inline(always)] pub fn opt_blocksize(&self) 		-> u16 			{ self.options.blocksize }
 	#[inline(always)] pub fn opt_timeout(&self) 		-> Duration 	{ self.options.timeout }
 	#[inline(always)] pub fn opt_transfer_size(&self) 	-> u32 			{ self.options.transfer_size }
-	#[inline(always)] pub fn host_cancelled(&self) 		-> bool 		{ self.cxl_tok.is_cancelled() }
+	#[inline(always)] pub fn cancelled(&self) 			-> bool 		{ self.cxl_tok.is_cancelled() }
 	#[inline(always)] pub fn peer(&self)				-> SocketAddr	{ self.socket.peer_addr().unwrap() }
 
 	// ########################################################################
@@ -215,7 +215,7 @@ impl TftpConnection {
 		let mut attempts: u8 = 0;
 		let mut buf: [u8; 32] = [0; 32];
 		loop {
-			if self.host_cancelled() {
+			if self.cancelled() {
 				return Err(ConnectionError::Cancelled);
 			}
 
@@ -305,7 +305,7 @@ impl TftpConnection {
 		}
 	
 		loop {
-			if self.host_cancelled() {
+			if self.cancelled() {
 				return Err(ConnectionError::Cancelled)
 			}
 	
@@ -351,7 +351,7 @@ impl TftpConnection {
 
 		read_buf.extend([0; 4]);
 		loop {
-			if self.host_cancelled() {
+			if self.cancelled() {
 				return Err(ConnectionError::Cancelled);
 			}
 

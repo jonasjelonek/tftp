@@ -25,35 +25,33 @@ pub struct TftpRequestParameters<'a> {
 pub struct TftpClient {
 	local_addr: IpAddr,
 	cxl_token: CancellationToken,
+	options: Vec<TftpOption>,
 }
 impl TftpClient {
 	pub fn new(local_addr: IpAddr, cxl_token: CancellationToken) -> Self {
 		Self {
 			local_addr,
-			cxl_token
+			cxl_token,
+			options: Vec::new()
 		}
 	}
 
-	pub async fn request<'a>(&mut self, req_params: TftpRequestParameters<'a>) {
-		let conn = match TftpConnection::new(
-			self.local_addr, self.cxl_token.clone()
-		) {
-			Ok(con) => con,
-			Err(e) => return error!("failed to do request due to lower layer error: {}", e),
-		};
-
-		let result = match req_params.req_kind {
-			RequestKind::Rrq => self.get(conn, req_params.server, req_params.file, req_params.options).await,
-			RequestKind::Wrq => self.put(conn, req_params.server, req_params.file, req_params.options).await,
-		};
-		if let Err(error) = result {
-			error!("Failed to perform request: {error}");
+	pub fn add_option(&mut self, option: &TftpOption) {
+		for x in 0..self.options.len() {
+			if self.options[x].kind() == option.kind() {
+				self.options[x] = option.clone();
+				return;
+			}
 		}
+
+		self.options.push(option.clone())
 	}
 
-	async fn get(&mut self, mut conn: TftpConnection, server: SocketAddr, file_path: PathBuf, options: &[TftpOption]) -> Result<()> {
-		let filename = file_path.file_name().unwrap().to_string_lossy();
-		let file = match OpenOptions::new().create(true).write(true).truncate(true).open(&file_path) {
+	pub async fn get(&mut self, path: PathBuf, server: SocketAddr) -> Result<()> {
+		let mut conn = TftpConnection::new(self.local_addr, self.cxl_token.clone())?;
+
+		let filename = path.file_name().unwrap().to_string_lossy();
+		let file = match OpenOptions::new().create(true).write(true).truncate(true).open(&path) {
 			Ok(f) => f,
 			Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return Err(RequestError::FileNotAccessible),
 			Err(e) => return Err(RequestError::OtherHostError(e))
@@ -64,8 +62,8 @@ impl TftpClient {
 			.mode(Mode::Octet)
 			.filename(&filename);
 
-		if options.len() > 0 {
-			builder = builder.options(options);
+		if self.options.len() > 0 {
+			builder = builder.options(&self.options[..]);
 		}
 		let pkt = builder.build();
 		conn.send_request_to(&pkt, server)?;
@@ -99,9 +97,11 @@ impl TftpClient {
 		Ok(())
 	}
 
-	async fn put(&mut self, mut conn: TftpConnection, server: SocketAddr, file_path: PathBuf, options: &[TftpOption]) -> Result<()> {
-		let filename = file_path.file_name().unwrap().to_string_lossy();
-		let file = match OpenOptions::new().read(true).open(&file_path) {
+	pub async fn put(&mut self, path: PathBuf, server: SocketAddr) -> Result<()> {
+		let mut conn = TftpConnection::new(self.local_addr, self.cxl_token.clone())?;
+
+		let filename = path.file_name().unwrap().to_string_lossy();
+		let file = match OpenOptions::new().read(true).open(&path) {
 			Ok(f) => f,
 			Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(RequestError::FileNotFound),
 			Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return Err(RequestError::FileNotAccessible),
@@ -113,7 +113,7 @@ impl TftpClient {
 			.mode(Mode::Octet) // we only support octet mode
 			.filename(&filename);
 
-		let mut options = options.to_owned();
+		let mut options = self.options.to_owned();
 		if options.len() > 0 {
 			if let Some(i) = options.iter().position(|e| e.kind() == TftpOptionKind::TransferSize) {
 				options[i] = TftpOption::TransferSize(file.metadata().unwrap().len() as u32);
@@ -145,22 +145,21 @@ impl TftpClient {
 	}
 }
 
-pub async fn run_client(action: cli::ClientAction, opts: cli::ClientOpts, cxl_token: CancellationToken) -> Result<()> {
+pub async fn run_client(action: cli::ClientAction, opts: cli::ClientOpts, root: PathBuf, cxl_token: CancellationToken) -> Result<()> {
 	let local_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
 	let mut client = TftpClient::new(local_addr, cxl_token);
 
 	let req_opts = action.get_opts();
-	let mut file_path = crate::working_dir().clone();
+	let mut file_path = root;
 	file_path.push(&req_opts.file.to_string_lossy()[..]);
 
-	let tftp_options = cli::parse_tftp_options(opts);
-	let req_params = TftpRequestParameters {
-		req_kind: action.as_req_kind(),
-		server: (req_opts.server, req_opts.port).into(),
-		file: file_path,
-		options: &tftp_options[..]
-	};
+	cli::parse_tftp_options(opts)
+		.iter()
+		.for_each(|opt| client.add_option(opt));
 
-	client.request(req_params).await;
-	Ok(())
+	let server = (req_opts.server, req_opts.port).into();
+	match action.as_req_kind() {
+		RequestKind::Rrq => client.get(file_path, server).await,
+		RequestKind::Wrq => client.put(file_path, server).await
+	}
 }
