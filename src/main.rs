@@ -4,7 +4,6 @@ pub mod cli;
 pub mod tftp;
 #[cfg(feature = "server")]
 pub mod server;
-
 #[cfg(feature = "client")]
 pub mod client;
 

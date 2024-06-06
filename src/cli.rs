@@ -14,8 +14,8 @@ use crate::tftp::options::TftpOption;
 #[command(author, version, about)]
 pub struct Options {
 	#[arg(value_enum, short, long, 
-		default_value_t = DebugLevel::Warn,
-		help = "Debug level to determine which messages are printed", global = true
+		default_value_t = DebugLevel::Warn,  global = true,
+		help = "Debug level to determine which messages are printed",
 	)]
 	pub debug: DebugLevel,
 
