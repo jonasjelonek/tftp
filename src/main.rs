@@ -38,7 +38,7 @@ async fn run(opts: cli::Options) -> Result<(), Box<dyn Error>> {
 	ctrlc::set_handler(move || {
 		info!("Received SIGINT");
 		sigint_token.cancel();
-	}).unwrap();
+	}).expect("Failed to install SIGINT handler");
 
 	match opts.run_mode {
 		cli::RunMode::Server { bind, port } => {

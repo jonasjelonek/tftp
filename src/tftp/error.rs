@@ -18,7 +18,7 @@ pub enum RequestError {
 	#[error("")]
 	ConnectionError(#[from] ConnectionError),
 	#[error("")]
-	OtherHostError(std::io::Error)
+	OtherHostError(#[from] std::io::Error)
 }
 
 #[derive(Debug, Error)]

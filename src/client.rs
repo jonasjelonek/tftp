@@ -1,6 +1,7 @@
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::net::{SocketAddr, IpAddr, Ipv4Addr};
+use std::io;
 
 use tokio_util::sync::CancellationToken;
 
@@ -50,10 +51,10 @@ impl TftpClient {
 	pub async fn get(&mut self, path: PathBuf, server: SocketAddr) -> Result<()> {
 		let mut conn = TftpConnection::new(self.local_addr, self.cxl_token.clone())?;
 
-		let filename = path.file_name().unwrap().to_string_lossy();
+		let filename = path.file_name().ok_or(RequestError::FileNotFound)?.to_string_lossy();
 		let file = match OpenOptions::new().create(true).write(true).truncate(true).open(&path) {
 			Ok(f) => f,
-			Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return Err(RequestError::FileNotAccessible),
+			Err(e) if e.kind() == io::ErrorKind::PermissionDenied => return Err(RequestError::FileNotAccessible),
 			Err(e) => return Err(RequestError::OtherHostError(e))
 		};
 		
@@ -84,7 +85,9 @@ impl TftpClient {
 		let mut init_data: Option<_> = None;
 		match pkt {
 			TftpPacket::OAck(oack) => {
-				let opts = tftp::options::parse_tftp_options(oack.options().unwrap()).unwrap();
+				let opts = tftp::options::parse_tftp_options(
+					oack.options().map_err(|e| ConnectionError::from(e))?
+				)?;
 				conn.set_options(&opts[..]);
 
 				let ack_pkt = tftp::packet::MutableTftpAck::new(0);
@@ -100,11 +103,11 @@ impl TftpClient {
 	pub async fn put(&mut self, path: PathBuf, server: SocketAddr) -> Result<()> {
 		let mut conn = TftpConnection::new(self.local_addr, self.cxl_token.clone())?;
 
-		let filename = path.file_name().unwrap().to_string_lossy();
+		let filename = path.file_name().ok_or(RequestError::FileNotFound)?.to_string_lossy();
 		let file = match OpenOptions::new().read(true).open(&path) {
 			Ok(f) => f,
-			Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(RequestError::FileNotFound),
-			Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => return Err(RequestError::FileNotAccessible),
+			Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(RequestError::FileNotFound),
+			Err(e) if e.kind() == io::ErrorKind::PermissionDenied => return Err(RequestError::FileNotAccessible),
 			Err(e) => return Err(RequestError::OtherHostError(e))
 		};
 
@@ -116,7 +119,7 @@ impl TftpClient {
 		let mut options = self.options.to_owned();
 		if options.len() > 0 {
 			if let Some(i) = options.iter().position(|e| e.kind() == TftpOptionKind::TransferSize) {
-				options[i] = TftpOption::TransferSize(file.metadata().unwrap().len() as u32);
+				options[i] = TftpOption::TransferSize(file.metadata()?.len() as u32);
 			}
 			builder = builder.options(&options[..]);
 		}
@@ -129,11 +132,13 @@ impl TftpClient {
 		if remote.ip() != server.ip() {
 			return Err(RequestError::UnknownPeer);
 		}
-		conn.connect_to(remote).unwrap();
+		conn.connect_to(remote).ok();
 
 		match pkt {
 			TftpPacket::OAck(oack) => {
-				let opts = tftp::options::parse_tftp_options(oack.options().unwrap()).unwrap();
+				let opts = tftp::options::parse_tftp_options(
+					oack.options().map_err(|e| ConnectionError::from(e))?
+				)?;
 				conn.set_options(&opts[..]);
 			},
 			TftpPacket::Ack(_) => (),

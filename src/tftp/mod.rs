@@ -142,8 +142,8 @@ impl TftpConnection {
 	// ########################################################################
 
 	pub fn set_reply_timeout(&mut self, timeout: Duration) {
-		self.socket.set_nonblocking(false).unwrap();
-		self.socket.set_read_timeout(Some(timeout)).unwrap();
+		self.socket.set_nonblocking(false).ok();
+		self.socket.set_read_timeout(Some(timeout)).ok();
 		debug!("Timeout set to {}ms", timeout.as_millis());
 	}
 

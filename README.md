@@ -42,5 +42,4 @@ It supports parallel operation with a arbitrary number of peers.
 ## Big TODOs
 
 - remove need for nightly toolchain
-- get rid of all the `unwrap`s - they are bad style but good during development
 - improve general output, especially for debugging

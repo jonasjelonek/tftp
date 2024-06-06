@@ -11,7 +11,7 @@ use tokio_util::sync::CancellationToken;
 #[allow(unused)]
 use log::{info, warn, error, debug, trace};
 
-use crate::tftp::error::{ErrorCode, OptionError, RequestError};
+use crate::tftp::error::{ConnectionError, ErrorCode, OptionError, RequestError};
 use crate::tftp::{RequestKind, TftpConnection};
 use crate::tftp::options::{parse_tftp_options, TftpOption, TftpOptionKind};
 use crate::tftp::packet as pkt;
@@ -128,11 +128,16 @@ impl TftpRequestHandler {
 		};
 		let file_len = match req.kind() {
 			RequestKind::Wrq => 0,
-			RequestKind::Rrq => file.metadata().unwrap().len() as u32,
+			RequestKind::Rrq => file.metadata()?.len() as u32,
 		};
 
 		/* Read, parse and acknowledge/reject options requested by the client. */
-		if self.negotiate_options(&mut conn, req.options().unwrap(), file_len, req.kind()).await? == false {
+		if self.negotiate_options(
+			&mut conn, 
+			req.options().map_err(|e| ConnectionError::from(e))?, 
+			file_len, 
+			req.kind()
+		).await? == false {
 			if req.kind() == RequestKind::Wrq {
 				let wrq_ack = pkt::MutableTftpAck::new(0);
 				conn.send_packet(&wrq_ack)?;
