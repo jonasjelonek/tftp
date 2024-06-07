@@ -12,10 +12,6 @@ Of course, this all is limited by my current knowledge of Rust. This project is 
 
 If you think there is room for improvement, please open an issue or a pull request.
 
-## Disclaimer
-
-**This currently needs Rust nightly compiler since I implemented some things with the help of currently non-stabilized features.**
-
 ## Supported TFTP features
 
 - [x] Server mode
@@ -30,7 +26,7 @@ If you think there is room for improvement, please open an issue or a pull reque
   - [x] Transfer size
   - [ ] Window size
 
-It supports parallel operation with a arbitrary number of peers.
+It supports parallel operation with an arbitrary number of peers.
 
 ## Supported RFCs
 - [x] RFC 1350 - TFTP protocol
@@ -39,7 +35,3 @@ It supports parallel operation with a arbitrary number of peers.
 - [x] RFC 2349 - TFTP timeout and transfer size options
 - [ ] RFC 7440 - TFTP windowsize option
 
-## Big TODOs
-
-- remove need for nightly toolchain
-- improve general output, especially for debugging

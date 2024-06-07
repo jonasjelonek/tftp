@@ -195,9 +195,11 @@ impl TftpConnection {
 
 	pub fn receive_packet<'a>(&self, buf: &'a mut [u8]) -> Result<packet::TftpPacket<'a>> {
 		let recv = self.receive_packet_from(buf)?;
-		if let Ok(peer) = self.socket.peer_addr() && peer != recv.1 { /* IP and port must be the same for whole connection */
-			self.send_error(ErrorCode::UnknownTid, "").ok();
-			return Err(ConnectionError::UnknownTid);
+		if let Ok(peer) = self.socket.peer_addr() {
+			if peer != recv.1 { /* IP and port must be the same for whole connection */
+				self.send_error(ErrorCode::UnknownTid, "").ok();
+				return Err(ConnectionError::UnknownTid);
+			}
 		}
 
 		Ok(recv.0)
