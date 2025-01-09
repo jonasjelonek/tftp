@@ -37,5 +37,5 @@ jobs:
         with:
           command: build
           target: ${{ matrix.platform.target }}
-          args: "--release --all-features"
+          args: "--locked --release --all-features"
           strip: false
