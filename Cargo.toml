@@ -11,14 +11,14 @@ client = []
 server = []
 
 [dependencies]
-tokio = { version = "1.38", features = [ "full" ] }
+tokio = { version = "1.43", features = [ "full" ] }
 tokio-util = "0.7"
 log = "0.4"
-simple_logger = "5"
+simple_logger = "5.0"
 clap = { version = "4.5", features = [ "cargo", "derive" ] }
 ctrlc = "3.4"
 shellexpand = "3.1"
-thiserror = "1.0"
+thiserror = "2.0"
 
 [profile.release]
 lto = "fat"
