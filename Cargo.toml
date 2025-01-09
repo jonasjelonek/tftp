@@ -21,8 +21,8 @@ shellexpand = "3.1"
 thiserror = "2.0"
 
 [profile.release]
-lto = "fat"
+lto = true
 codegen-units = 1
-opt-level = "s"
+opt-level = "z"
 strip = "symbols"
 panic = "abort"
